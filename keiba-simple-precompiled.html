@@ -1,0 +1,1739 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>競馬 簡易版ツール</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #022c22; }
+  #loading { color: #fbbf24; font-family: sans-serif; padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="root"><div id="loading">読み込み中…（初回はCDNの読み込みに数秒かかります）</div></div>
+
+<script>
+  window.onerror = function (msg, url, line, col, error) {
+    var root = document.getElementById("root");
+    if (root) {
+      root.innerHTML =
+        '<div style="color:#fca5a5;background:#1a0505;padding:20px;font-family:monospace;white-space:pre-wrap;font-size:14px;line-height:1.6;">' +
+        '⚠ エラーが発生しました\n\n' +
+        'メッセージ: ' + msg + '\n' +
+        '行番号: ' + line + ' 列: ' + col + '\n\n' +
+        (error && error.stack ? 'スタック: ' + error.stack.slice(0, 500) + '\n\n' : '') +
+        'このエラー内容をスクリーンショットで送ってください。' +
+        '</div>';
+    }
+    return false;
+  };
+  window.addEventListener("unhandledrejection", function (event) {
+    var root = document.getElementById("root");
+    if (root) {
+      root.innerHTML =
+        '<div style="color:#fca5a5;background:#1a0505;padding:20px;font-family:monospace;white-space:pre-wrap;font-size:14px;">' +
+        '⚠ 非同期エラー: ' + (event.reason && event.reason.message ? event.reason.message : String(event.reason)) +
+        '</div>';
+    }
+  });
+  setTimeout(function () {
+    var loading = document.getElementById("loading");
+    if (loading) {
+      loading.innerHTML =
+        "読み込みに時間がかかっています…（20秒経過）<br/>このままエラー表示に切り替わらない場合は、通信環境の問題の可能性があります。Wi-Fiに接続してから再読み込みしてみてください。";
+    }
+  }, 20000);
+</script>
+
+<script>
+  // window.storage ポリフィル：Claudeアーティファクト専用APIを localStorage で再現
+  (function () {
+    function nsKey(key, shared) {
+      return (shared ? "shared:" : "personal:") + key;
+    }
+    window.storage = {
+      async get(key, shared) {
+        const raw = localStorage.getItem(nsKey(key, shared));
+        if (raw === null) throw new Error("key not found: " + key);
+        return { key, value: JSON.parse(raw), shared: !!shared };
+      },
+      async set(key, value, shared) {
+        localStorage.setItem(nsKey(key, shared), JSON.stringify(value));
+        return { key, value, shared: !!shared };
+      },
+      async delete(key, shared) {
+        localStorage.removeItem(nsKey(key, shared));
+        return { key, deleted: true, shared: !!shared };
+      },
+      async list(prefix, shared) {
+        const prefixFull = nsKey(prefix || "", shared);
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(prefixFull)) keys.push(k.slice((shared ? "shared:" : "personal:").length));
+        }
+        return { keys, prefix, shared: !!shared };
+      },
+    };
+  })();
+</script>
+
+<script>
+const { useState, useMemo, useCallback, useEffect, useRef } = React;
+const Papa = window.Papa;
+const STYLES = [
+  { key: "nige", label: "\u9003\u3052", base: 1, color: "bg-red-500", text: "text-red-400" },
+  { key: "senko", label: "\u5148\u884C", base: 2, color: "bg-amber-500", text: "text-amber-400" },
+  { key: "sashi", label: "\u5DEE\u3057", base: 3, color: "bg-sky-500", text: "text-sky-400" },
+  { key: "oikomi", label: "\u8FFD\u8FBC", base: 4, color: "bg-violet-500", text: "text-violet-400" }
+];
+const styleByKey = Object.fromEntries(STYLES.map((s) => [s.key, s]));
+const STORAGE_PREFIX = "keiba-simple:";
+const TEMPERATURE = 1.5;
+const MARKET_BLEND = 0.35;
+const EV_THRESHOLD = 1.15;
+const SEX_ALLOWANCE = 2;
+function isFemale(sex) {
+  const s = String(sex || "").trim();
+  return s === "\u725D" || /^(f|female|\u725D\u99AC)$/i.test(s);
+}
+function normalizedWeight(h) {
+  const w = Number(h.weight);
+  if (!Number.isFinite(w)) return w;
+  return isFemale(h.sex) ? w + SEX_ALLOWANCE : w;
+}
+const COURSE_DATA = {
+  \u6771\u4EAC: {
+    hand: "\u5DE6\u56DE\u308A",
+    turf: { straight: "\u7D04525m", byDistance: [
+      { max: 1400, bias: -0.2, postBias: 0.1, note: "\u76F4\u7DDA\u306F\u9577\u3044\u304C\u30B3\u30FC\u30CA\u30FC\u304C\u5C11\u306A\u304F\u5916\u67A0\u3067\u3082\u4F4D\u7F6E\u3092\u53D6\u308A\u3084\u3059\u3044\u3002" },
+      { max: 1800, bias: -0.4, postBias: 0.15, note: "\u30DE\u30A4\u30EB\u524D\u5F8C\u306F\u76F4\u7DDA\u306E\u9577\u3055\u304C\u6D3B\u304D\u3001\u5DEE\u3057\u304C\u6C7A\u307E\u308A\u3084\u3059\u3044\u3002" },
+      { max: 9999, bias: -0.6, postBias: 0.05, note: "\u4E2D\u8DDD\u96E2\u4EE5\u4E0A\u306F\u30ED\u30F3\u30B0\u30B9\u30D1\u30FC\u30C8\u306B\u306A\u308A\u5916\u67A0\u4E0D\u5229\u306F\u5C0F\u3055\u3044\u3002" }
+    ] },
+    dirt: { straight: "\u7D04501m", byDistance: [
+      { max: 1400, bias: 0.3, postBias: 0.25, note: "\u30C0\u30FC\u30C8\u77ED\u8DDD\u96E2\u306F\u5185\u67A0\u30FB\u5148\u884C\u304C\u660E\u78BA\u306B\u6709\u5229\u3002" },
+      { max: 9999, bias: 0.1, postBias: 0.15, note: "\u8DDD\u96E2\u304C\u5EF6\u3073\u3066\u3082\u524D\u6709\u5229\u306E\u50BE\u5411\u306F\u6B8B\u308B\u3002" }
+    ] }
+  },
+  \u4E2D\u5C71: {
+    hand: "\u53F3\u56DE\u308A",
+    turf: { straight: "\u7D04310m", byDistance: [
+      { max: 1200, bias: 0.9, postBias: 0.3, note: "\u6700\u521D\u306E\u30B3\u30FC\u30CA\u30FC\u307E\u3067\u304C\u77ED\u304F\u3001\u5185\u67A0\u30FB\u5148\u884C\u304C\u6975\u7AEF\u306B\u6709\u5229\u3002" },
+      { max: 9999, bias: 0.6, postBias: 0.15, note: "\u5C0F\u56DE\u308A\u3067\u76F4\u7DDA\u304C\u77ED\u304F\u5148\u884C\u30FB\u5185\u67A0\u6709\u5229\u3002" }
+    ] },
+    dirt: { straight: "\u7D04308m", byDistance: [
+      { max: 9999, bias: 0.7, postBias: 0.2, note: "\u30C0\u30FC\u30C8\u3082\u5C0F\u56DE\u308A\u3067\u5148\u884C\u6709\u5229\u3002" }
+    ] }
+  },
+  \u962A\u795E: {
+    hand: "\u53F3\u56DE\u308A",
+    turf: { straight: "\u7D04356\u301C473m(\u5185/\u5916)", byDistance: [
+      { max: 1400, bias: 0.1, postBias: 0.15, note: "\u77ED\u8DDD\u96E2\u306F\u5185\u67A0\u6709\u5229\u304C\u3084\u3084\u51FA\u3084\u3059\u3044\u3002" },
+      { max: 9999, bias: 0.2, postBias: 0.05, note: "\u76F4\u7DDA\u306F\u9577\u3044\u304C\u6025\u5742\u304C\u3042\u308A\u5148\u884C\u529B\u3082\u6D3B\u304D\u308B\u3002" }
+    ] },
+    dirt: { straight: "\u7D04352m", byDistance: [
+      { max: 9999, bias: 0.4, postBias: 0.2, note: "\u30C0\u30FC\u30C8\u306F\u5148\u884C\u30FB\u5185\u67A0\u6709\u5229\u306E\u50BE\u5411\u3002" }
+    ] }
+  },
+  \u4EAC\u90FD: {
+    hand: "\u53F3\u56DE\u308A",
+    turf: { straight: "\u7D04328\u301C403m(\u5185/\u5916)", byDistance: [
+      { max: 1400, bias: 0, postBias: 0.12, note: "3\u30B3\u30FC\u30CA\u30FC\u306E\u5742\u306E\u4E0B\u308A\u3067\u4F4D\u7F6E\u53D6\u308A\u304C\u5909\u308F\u308A\u3084\u3059\u3044\u3002" },
+      { max: 9999, bias: -0.2, postBias: 0.05, note: "\u76F4\u7DDA\u304C\u9577\u3081\u3067\u5DEE\u3057\u3082\u6C7A\u307E\u308A\u3084\u3059\u3044\u3002" }
+    ] },
+    dirt: { straight: "\u7D04329m", byDistance: [
+      { max: 9999, bias: 0.4, postBias: 0.18, note: "\u30C0\u30FC\u30C8\u306F\u5148\u884C\u6709\u5229\u3001\u5185\u67A0\u306E\u30ED\u30B9\u5F71\u97FF\u304C\u5927\u304D\u3044\u3002" }
+    ] }
+  },
+  \u4E2D\u4EAC: {
+    hand: "\u5DE6\u56DE\u308A",
+    turf: { straight: "\u7D04412m", byDistance: [
+      { max: 9999, bias: -0.3, postBias: 0.08, note: "\u76F4\u7DDA\u306B\u5742\u304C\u3042\u308A\u5DEE\u3057\u30FB\u8FFD\u8FBC\u304C\u4F38\u3073\u3084\u3059\u3044\u3002" }
+    ] },
+    dirt: { straight: "\u7D04410m", byDistance: [
+      { max: 9999, bias: 0.3, postBias: 0.18, note: "\u30C0\u30FC\u30C8\u306F\u5148\u884C\u6709\u5229\u3082\u5742\u3067\u591A\u5C11\u5DEE\u3057\u3082\u6C7A\u307E\u308B\u3002" }
+    ] }
+  },
+  \u65B0\u6F5F: {
+    hand: "\u5DE6\u56DE\u308A",
+    turf: { straight: "\u7D04359m(\u901A\u5E38)/\u7D04659m(\u76F4\u7DDA\u30B3\u30FC\u30B9)", byDistance: [
+      { max: 1e3, bias: -0.4, postBias: 0.15, note: "1000m\u76F4\u7DDA\u306F\u30B3\u30FC\u30CA\u30FC\u304C\u306A\u304F\u3001\u5916\u67A0\u3067\u3082\u8DDD\u96E2\u30ED\u30B9\u304C\u4E00\u5207\u767A\u751F\u3057\u306A\u3044\u3002\u3080\u3057\u308D\u5185\u5074\u306F\u958B\u50AC\u304C\u9032\u3080\u307B\u3069\u99AC\u5834\u304C\u8352\u308C\u3084\u3059\u304F\u3001\u5916\u76EE\u306E\u30EC\u30FC\u30F3\u306E\u65B9\u304C\u829D\u304C\u50B7\u3093\u3067\u304A\u3089\u305A\u6709\u5229\u306B\u306A\u308A\u3084\u3059\u3044\u3002\u811A\u8CEA\u9762\u3067\u306F\u5148\u884C\u301C\u597D\u4F4D\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u304C\u6B8B\u308A\u3084\u3059\u3044\u3002" },
+      { max: 9999, bias: -0.8, postBias: 0.05, note: "\u65E5\u672C\u6700\u9577\u7D1A\u306E\u76F4\u7DDA\u3067\u6975\u7AEF\u306B\u5DEE\u3057\u30FB\u8FFD\u8FBC\u304C\u6C7A\u307E\u308A\u3084\u3059\u3044\u3002" }
+    ] },
+    dirt: { straight: "\u7D04353m", byDistance: [
+      { max: 9999, bias: 0.3, postBias: 0.18, note: "\u30C0\u30FC\u30C8\u306F\u5E73\u5766\u3067\u5148\u884C\u6709\u5229\u3002" }
+    ] }
+  },
+  \u798F\u5CF6: {
+    hand: "\u53F3\u56DE\u308A",
+    turf: { straight: "\u7D04296m", byDistance: [
+      { max: 1200, bias: 0.8, postBias: 0.28, note: "\u5C0F\u56DE\u308A\u3067\u76F4\u7DDA\u3082\u77ED\u304F\u5185\u67A0\u30FB\u5148\u884C\u304C\u6709\u5229\u3002" },
+      { max: 9999, bias: 0.5, postBias: 0.15, note: "\u5C0F\u56DE\u308A\u30B3\u30FC\u30B9\u3067\u5148\u884C\u30FB\u5185\u67A0\u304C\u6B8B\u308A\u3084\u3059\u3044\u3002" }
+    ] },
+    dirt: { straight: "\u7D04296m", byDistance: [
+      { max: 9999, bias: 0.6, postBias: 0.22, note: "\u30C0\u30FC\u30C8\u5C0F\u56DE\u308A\u3067\u5148\u884C\u30FB\u5185\u67A0\u304C\u660E\u78BA\u306B\u6709\u5229\u3002" }
+    ] }
+  },
+  \u5C0F\u5009: {
+    hand: "\u53F3\u56DE\u308A",
+    turf: { straight: "\u7D04293m", byDistance: [
+      { max: 1200, bias: 0.8, postBias: 0.28, note: "\u5C0F\u56DE\u308A\u30FB\u5E73\u5766\u3067\u76F4\u7DDA\u3082\u77ED\u304F\u5148\u884C\u30FB\u5185\u67A0\u304C\u6709\u5229\u3002" },
+      { max: 9999, bias: 0.5, postBias: 0.15, note: "\u5C0F\u56DE\u308A\u30FB\u5E73\u5766\u3067\u5148\u884C\u6709\u5229\u306A\u50BE\u5411\u3002" }
+    ] },
+    dirt: { straight: "\u7D04291m", byDistance: [
+      { max: 1e3, bias: 0.7, postBias: 0.2, note: "1000m\u30C0\u30FC\u30C8\u306F\u30B9\u30BF\u30FC\u30C8\u76F4\u5F8C\u304B\u3089\u5148\u884C\u4E89\u3044\u304C\u6FC0\u3057\u3044\u3002" },
+      { max: 9999, bias: 0.6, postBias: 0.2, note: "\u30C0\u30FC\u30C8\u5C0F\u56DE\u308A\u3067\u5148\u884C\u6709\u5229\u3002" }
+    ] }
+  },
+  \u672D\u5E4C: {
+    hand: "\u53F3\u56DE\u308A",
+    turf: { straight: "\u7D04266m", byDistance: [
+      { max: 9999, bias: 0.3, postBias: 0.1, note: "\u76F4\u7DDA\u306F\u77ED\u3044\u304C\u6D0B\u829D\u3067\u30BF\u30D5\u306A\u99AC\u5834\u306E\u305F\u3081\u6975\u7AEF\u306A\u524D\u6709\u5229\u306B\u306F\u306A\u308A\u306B\u304F\u3044\u3002" }
+    ] },
+    dirt: { straight: "\u7D04264m", byDistance: [
+      { max: 9999, bias: 0.5, postBias: 0.18, note: "\u30C0\u30FC\u30C8\u306F\u5C0F\u56DE\u308A\u3067\u5148\u884C\u6709\u5229\u3002" }
+    ] }
+  },
+  \u51FD\u9928: {
+    hand: "\u53F3\u56DE\u308A",
+    turf: { straight: "\u7D04262m", byDistance: [
+      { max: 9999, bias: 0.3, postBias: 0.1, note: "\u76F4\u7DDA\u306F\u77ED\u3044\u304C\u6D0B\u829D\u3067\u30BF\u30D5\u306A\u99AC\u5834\u306E\u305F\u3081\u6975\u7AEF\u306A\u524D\u6709\u5229\u306B\u306F\u306A\u308A\u306B\u304F\u3044\u3002" }
+    ] },
+    dirt: { straight: "\u7D04260m", byDistance: [
+      { max: 9999, bias: 0.5, postBias: 0.18, note: "\u30C0\u30FC\u30C8\u306F\u5C0F\u56DE\u308A\u3067\u5148\u884C\u6709\u5229\u3002" }
+    ] }
+  }
+};
+const COURSE_NAMES = Object.keys(COURSE_DATA);
+const COURSE_CIRCUMFERENCE_M = {
+  \u6771\u4EAC: { turf: 2083, dirt: 1899 },
+  \u4E2D\u5C71: { turf: 1840, dirt: 1667 },
+  \u962A\u795E: { turf: 2089, dirt: 1517 },
+  \u4EAC\u90FD: { turf: 1894, dirt: 1607 },
+  \u4E2D\u4EAC: { turf: 1715, dirt: 1530 },
+  \u65B0\u6F5F: { turf: 2223, dirt: 1472 },
+  \u798F\u5CF6: { turf: 1600, dirt: 1444 },
+  \u5C0F\u5009: { turf: 1615, dirt: 1445 },
+  \u672D\u5E4C: { turf: 1640, dirt: 1487 },
+  \u51FD\u9928: { turf: 1626, dirt: 1475 }
+};
+function resolveCourseConfig(courseName, surfaceKey, distance) {
+  const course = COURSE_DATA[courseName] || COURSE_DATA["\u6771\u4EAC"];
+  const surfaceData = course[surfaceKey] || course.turf;
+  const bucket = surfaceData.byDistance.find((b) => distance <= b.max) || surfaceData.byDistance[surfaceData.byDistance.length - 1];
+  return { hand: course.hand, straight: surfaceData.straight, ...bucket };
+}
+const SIRE_DATA = {
+  \u30C7\u30A3\u30FC\u30D7\u30A4\u30F3\u30D1\u30AF\u30C8: { surface: "turf", distance: [1600, 2400], note: "\u30B9\u30D4\u30FC\u30C9\u3068\u6301\u7D9A\u529B\u306B\u512A\u308C\u308B\u3002\u829D\u4E2D\u8DDD\u96E2\u304C\u4E3B\u6226\u5834\u3002" },
+  \u30AD\u30F3\u30B0\u30AB\u30E1\u30CF\u30E1\u30CF: { surface: "both", distance: [1400, 2400], note: "\u829D\u30C0\u30FC\u30C8\u554F\u308F\u305A\u4E07\u80FD\u3002\u30D1\u30EF\u30FC\u3068\u30B9\u30D4\u30FC\u30C9\u3092\u517C\u5099\u3002" },
+  \u30ED\u30FC\u30C9\u30AB\u30CA\u30ED\u30A2: { surface: "turf", distance: [1200, 1800], note: "\u30B9\u30D7\u30EA\u30F3\u30C8\u301C\u30DE\u30A4\u30EB\u3067\u5B9F\u7E3E\u8C4A\u5BCC\u3002\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  \u30CF\u30FC\u30C4\u30AF\u30E9\u30A4: { surface: "turf", distance: [1800, 2600], note: "\u4E2D\u9577\u8DDD\u96E2\u3067\u30B9\u30BF\u30DF\u30CA\u3068\u5E95\u529B\u3002\u6669\u6210\u50BE\u5411\u3002" },
+  \u30AA\u30EB\u30D5\u30A7\u30FC\u30F4\u30EB: { surface: "turf", distance: [2e3, 3e3], note: "\u9577\u8DDD\u96E2\u30FB\u30B9\u30BF\u30DF\u30CA\u52DD\u8CA0\u306B\u5F37\u3044\u3002" },
+  \u30C9\u30A5\u30E9\u30E1\u30F3\u30C6: { surface: "turf", distance: [1800, 2400], note: "\u30B9\u30D4\u30FC\u30C9\u3068\u30D1\u30EF\u30FC\u3092\u517C\u5099\u3057\u305F\u4E2D\u8DDD\u96E2\u578B\u3002" },
+  \u30AD\u30BA\u30CA: { surface: "turf", distance: [1800, 2400], note: "\u829D\u4E2D\u9577\u8DDD\u96E2\u3067\u5B89\u5B9A\u3057\u305F\u6210\u7E3E\u3002" },
+  \u30E2\u30FC\u30EA\u30B9: { surface: "both", distance: [1600, 2e3], note: "\u30DE\u30A4\u30EB\u301C\u4E2D\u8DDD\u96E2\u3067\u4E07\u80FD\u3002\u829D\u30C0\u30FC\u30C8\u53CC\u65B9\u3067\u7D50\u679C\u3002" },
+  \u30A8\u30D4\u30D5\u30A1\u30CD\u30A4\u30A2: { surface: "turf", distance: [2e3, 2600], note: "\u4E2D\u9577\u8DDD\u96E2\u306E\u30B9\u30BF\u30DF\u30CA\u6226\u306B\u5F37\u3044\u3002" },
+  \u30EB\u30FC\u30E9\u30FC\u30B7\u30C3\u30D7: { surface: "both", distance: [2e3, 2600], note: "\u30D1\u30EF\u30FC\u578B\u3067\u829D\u30C0\u30FC\u30C8\u517C\u7528\u3001\u9577\u8DDD\u96E2\u3082\u5BFE\u5FDC\u3002" },
+  \u30C0\u30A4\u30EF\u30E1\u30B8\u30E3\u30FC: { surface: "turf", distance: [1400, 1800], note: "\u30DE\u30A4\u30EB\u301C\u4E2D\u8DDD\u96E2\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  \u30B5\u30C8\u30CE\u30C0\u30A4\u30E4\u30E2\u30F3\u30C9: { surface: "turf", distance: [2e3, 2600], note: "\u4E2D\u9577\u8DDD\u96E2\u5411\u304D\u306E\u30B9\u30C6\u30A4\u30E4\u30FC\u7CFB\u3002" },
+  \u30AD\u30BF\u30B5\u30F3\u30D6\u30E9\u30C3\u30AF: { surface: "turf", distance: [2e3, 2600], note: "\u9577\u8DDD\u96E2\u30FB\u30B9\u30BF\u30DF\u30CA\u8C4A\u5BCC\u3002" },
+  \u30B4\u30FC\u30EB\u30C9\u30A2\u30EA\u30E5\u30FC\u30EB: { surface: "dirt", distance: [1400, 2e3], note: "\u30C0\u30FC\u30C8\u7A2E\u7261\u99AC\u306E\u5927\u9ED2\u67F1\u7684\u5B58\u5728\u3002" },
+  \u30AF\u30ED\u30D5\u30CD: { surface: "dirt", distance: [1400, 1800], note: "\u30C0\u30FC\u30C8\u3067\u5727\u5012\u7684\u306A\u30B9\u30D4\u30FC\u30C9\u9069\u6027\u3002" },
+  \u30B7\u30CB\u30B9\u30BF\u30FC\u30DF\u30CB\u30B9\u30BF\u30FC: { surface: "dirt", distance: [1200, 1800], note: "\u30C0\u30FC\u30C8\u306E\u30B9\u30D7\u30EA\u30F3\u30C8\u301C\u30DE\u30A4\u30EB\u306B\u5F37\u3044\u3002" },
+  \u30D1\u30A4\u30ED: { surface: "dirt", distance: [1200, 1600], note: "\u30C0\u30FC\u30C8\u30B9\u30D7\u30EA\u30F3\u30C8\u306B\u5F37\u3044\u3002" },
+  \u30D8\u30CB\u30FC\u30D2\u30E5\u30FC\u30BA: { surface: "dirt", distance: [1e3, 1400], note: "\u30C0\u30FC\u30C8\u77ED\u8DDD\u96E2\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  // ---- ここから追加分（芝中長距離） ----
+  \u30B5\u30FC\u30C8\u30A5\u30EB\u30CA\u30FC\u30EA\u30A2: { surface: "turf", distance: [1800, 2400], note: "\u4E2D\u8DDD\u96E2\u306E\u30D1\u30EF\u30FC\u578B\u3002\u5E95\u529B\u304C\u3042\u308B\u3002" },
+  \u30B3\u30F3\u30C8\u30EC\u30A4\u30EB: { surface: "turf", distance: [2e3, 2400], note: "\u30AF\u30E9\u30B7\u30C3\u30AF\u30C7\u30A3\u30B9\u30BF\u30F3\u30B9\u9069\u6027\u306E\u9AD8\u3044\u4E2D\u8DDD\u96E2\u8840\u7D71\u3002" },
+  \u30EC\u30A4\u30C7\u30AA\u30ED: { surface: "turf", distance: [1800, 2400], note: "\u4E2D\u8DDD\u96E2\u306E\u30B9\u30BF\u30DF\u30CA\u578B\u3002" },
+  \u30B5\u30C8\u30CE\u30AF\u30E9\u30A6\u30F3: { surface: "turf", distance: [1800, 2400], note: "\u4E2D\u8DDD\u96E2\u306E\u30D1\u30EF\u30FC\u578B\u3002" },
+  \u30B4\u30FC\u30EB\u30C9\u30B7\u30C3\u30D7: { surface: "turf", distance: [2e3, 3200], note: "\u9577\u8DDD\u96E2\u306E\u30B9\u30BF\u30DF\u30CA\u578B\u3002\u6669\u6210\u50BE\u5411\u3002" },
+  \u30CF\u30FC\u30D3\u30F3\u30B8\u30E3\u30FC: { surface: "turf", distance: [2e3, 2600], note: "\u6B27\u5DDE\u7CFB\u306E\u30B9\u30BF\u30DF\u30CA\u30FB\u6301\u7D9A\u529B\u3002\u6BCD\u7236\u3068\u3057\u3066\u3082\u512A\u79C0\u3002" },
+  \u30B9\u30AF\u30EA\u30FC\u30F3\u30D2\u30FC\u30ED\u30FC: { surface: "turf", distance: [2e3, 2600], note: "\u4E2D\u9577\u8DDD\u96E2\u306E\u30B9\u30BF\u30DF\u30CA\u578B\u3002" },
+  \u30B8\u30E3\u30B9\u30BF\u30A6\u30A7\u30A4: { surface: "turf", distance: [1800, 2e3], note: "\u4E2D\u8DDD\u96E2\u306E\u30B9\u30D4\u30FC\u30C9\u6301\u7D9A\u578B\u3002" },
+  \u30D5\u30A3\u30A8\u30FC\u30EB\u30DE\u30F3: { surface: "turf", distance: [2400, 3200], note: "\u9577\u8DDD\u96E2\u306E\u30B9\u30BF\u30DF\u30CA\u8C4A\u5BCC\u306A\u30B9\u30C6\u30A4\u30E4\u30FC\u7CFB\u3002" },
+  \u30A2\u30CB\u30DE\u30EB\u30AD\u30F3\u30B0\u30C0\u30E0: { surface: "turf", distance: [1800, 2400], note: "\u4E2D\u8DDD\u96E2\u3067\u81EA\u5728\u6027\u306E\u3042\u308B\u8840\u7D71\u3002" },
+  \u30C0\u30CE\u30F3\u30D0\u30E9\u30FC\u30C9: { surface: "turf", distance: [1800, 2400], note: "\u4E2D\u8DDD\u96E2\u306E\u30B9\u30BF\u30DF\u30CA\u578B\u3002" },
+  \u30ED\u30B8\u30E3\u30FC\u30D0\u30ED\u30FC\u30BA: { surface: "turf", distance: [1800, 2400], note: "\u4E2D\u8DDD\u96E2\u578B\u3002" },
+  \u30A2\u30EB\u30A2\u30A4\u30F3: { surface: "turf", distance: [1800, 2e3], note: "\u4E2D\u8DDD\u96E2\u578B\u3002" },
+  \u30CE\u30FC\u30D6\u30EB\u30DF\u30C3\u30B7\u30E7\u30F3: { surface: "turf", distance: [1800, 2400], note: "\u4E2D\u8DDD\u96E2\u306E\u30B9\u30BF\u30DF\u30CA\u578B\u3002" },
+  \u30A6\u30A4\u30F3\u30D6\u30E9\u30A4\u30C8: { surface: "turf", distance: [1800, 2200], note: "\u4E2D\u8DDD\u96E2\u578B\u3002" },
+  \u30E9\u30D6\u30EA\u30FC\u30C7\u30A4: { surface: "turf", distance: [1800, 2200], note: "\u4E2D\u8DDD\u96E2\u578B\u3002\u6669\u6210\u50BE\u5411\u3002" },
+  // ---- 芝マイル〜中距離 ----
+  \u30EA\u30A2\u30EB\u30B9\u30C6\u30A3\u30FC\u30EB: { surface: "turf", distance: [1600, 2200], note: "\u30DE\u30A4\u30EB\u301C\u4E2D\u8DDD\u96E2\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  \u30C0\u30CE\u30F3\u30AD\u30F3\u30B0\u30EA\u30FC: { surface: "turf", distance: [1600, 2e3], note: "\u30DE\u30A4\u30EB\u301C\u4E2D\u8DDD\u96E2\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  \u30A4\u30B9\u30E9\u30DC\u30CB\u30FC\u30BF: { surface: "turf", distance: [1600, 2e3], note: "\u30DE\u30A4\u30EB\u301C\u4E2D\u8DDD\u96E2\u3002" },
+  \u30EF\u30FC\u30EB\u30C9\u30A8\u30FC\u30B9: { surface: "turf", distance: [1600, 2e3], note: "\u30DE\u30A4\u30EB\u301C\u4E2D\u8DDD\u96E2\u3002" },
+  \u30B7\u30B9\u30AD\u30F3: { surface: "turf", distance: [1400, 1800], note: "\u30DE\u30A4\u30EB\u5DE7\u8005\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  \u30C7\u30AF\u30E9\u30EC\u30FC\u30B7\u30E7\u30F3\u30AA\u30D6\u30A6\u30A9\u30FC: { surface: "turf", distance: [1600, 2e3], note: "\u30DE\u30A4\u30EB\u301C\u4E2D\u8DDD\u96E2\u3002" },
+  \u30BF\u30CB\u30CE\u30D5\u30E9\u30F3\u30B1\u30EB: { surface: "turf", distance: [1400, 1800], note: "\u30DE\u30A4\u30EB\u301C\u4E2D\u8DDD\u96E2\u3002" },
+  // ---- 芝マイル・スプリント ----
+  \u30A2\u30C9\u30DE\u30A4\u30E4\u30DE\u30FC\u30BA: { surface: "turf", distance: [1400, 1600], note: "\u30DE\u30A4\u30EB\u5DE7\u8005\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  \u30E2\u30BA\u30A2\u30B9\u30B3\u30C3\u30C8: { surface: "turf", distance: [1400, 1600], note: "\u30DE\u30A4\u30EB\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  \u30BF\u30EF\u30FC\u30AA\u30D6\u30ED\u30F3\u30C9\u30F3: { surface: "turf", distance: [1400, 1600], note: "\u30DE\u30A4\u30EB\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  \u30ED\u30B4\u30BF\u30A4\u30D7: { surface: "turf", distance: [1400, 1800], note: "\u30DE\u30A4\u30EB\u301C\u4E2D\u8DDD\u96E2\u3002" },
+  \u30DF\u30C3\u30AD\u30FC\u30B9\u30EF\u30ED\u30FC: { surface: "turf", distance: [1400, 1800], note: "\u30DE\u30A4\u30EB\u301C\u4E2D\u8DDD\u96E2\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  \u30AB\u30EC\u30F3\u30D6\u30E9\u30C3\u30AF\u30D2\u30EB: { surface: "turf", distance: [1400, 1600], note: "\u30DE\u30A4\u30EB\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  // ---- 芝スプリント ----
+  \u30D3\u30C3\u30B0\u30A2\u30FC\u30B5\u30FC: { surface: "turf", distance: [1200, 1400], note: "\u30B9\u30D7\u30EA\u30F3\u30C8\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  \u30C0\u30CE\u30F3\u30B9\u30DE\u30C3\u30B7\u30E5: { surface: "turf", distance: [1200, 1400], note: "\u30B9\u30D7\u30EA\u30F3\u30C8\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  \u30D5\u30A1\u30A4\u30F3\u30CB\u30FC\u30C9\u30EB: { surface: "turf", distance: [1200, 1400], note: "\u30B9\u30D7\u30EA\u30F3\u30C8\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  \u30EC\u30C3\u30C9\u30D5\u30A1\u30EB\u30AF\u30B9: { surface: "turf", distance: [1200, 1400], note: "\u30B9\u30D7\u30EA\u30F3\u30C8\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  // ---- ダート ----
+  \u30DB\u30C3\u30B3\u30FC\u30BF\u30EB\u30DE\u30A8: { surface: "dirt", distance: [1600, 2100], note: "\u30C0\u30FC\u30C8\u4E2D\u8DDD\u96E2\u306E\u4E3B\u529B\u7A2E\u7261\u99AC\u3002" },
+  \u30C9\u30EC\u30D5\u30A9\u30F3: { surface: "dirt", distance: [1200, 1800], note: "\u30C0\u30FC\u30C8\u301C\u829D\u77ED\u8DDD\u96E2\u306E\u30B9\u30D4\u30FC\u30C9\u578B\u3002" },
+  \u30DE\u30B8\u30A7\u30B9\u30C6\u30A3\u30C3\u30AF\u30A6\u30A9\u30EA\u30A2\u30FC: { surface: "dirt", distance: [1400, 1800], note: "\u30C0\u30FC\u30C8\u30DE\u30A4\u30EB\u301C\u4E2D\u8DDD\u96E2\u3002" },
+  \u30B9\u30DE\u30FC\u30C8\u30D5\u30A1\u30EB\u30B3\u30F3: { surface: "dirt", distance: [1600, 2100], note: "\u30C0\u30FC\u30C8\u4E2D\u8DDD\u96E2\u306E\u30B9\u30BF\u30DF\u30CA\u578B\u3002" },
+  \u30B5\u30F3\u30C0\u30FC\u30B9\u30CE\u30FC: { surface: "dirt", distance: [1600, 2e3], note: "\u30C0\u30FC\u30C8\u4E2D\u8DDD\u96E2\u3002" },
+  \u30D9\u30F3\u30D0\u30C8\u30EB: { surface: "dirt", distance: [1400, 1800], note: "\u30C0\u30FC\u30C8\u30DE\u30A4\u30EB\u301C\u4E2D\u8DDD\u96E2\u3002" },
+  \u30B4\u30FC\u30EB\u30C9\u30C9\u30EA\u30FC\u30E0: { surface: "dirt", distance: [1400, 1800], note: "\u30C0\u30FC\u30C8\u30DE\u30A4\u30EB\u301C\u4E2D\u8DDD\u96E2\u3002" },
+  \u30CA\u30C0\u30EB: { surface: "dirt", distance: [1200, 1600], note: "\u30C0\u30FC\u30C8\u30B9\u30D7\u30EA\u30F3\u30C8\u301C\u30DE\u30A4\u30EB\u3002" },
+  \u30B8\u30E7\u30FC\u30AB\u30D7\u30C1\u30FC\u30CE: { surface: "dirt", distance: [1200, 1600], note: "\u30C0\u30FC\u30C8\u30B9\u30D7\u30EA\u30F3\u30C8\u301C\u30DE\u30A4\u30EB\u3002" },
+  \u30B7\u30E3\u30F3\u30CF\u30A4\u30DC\u30D3\u30FC: { surface: "dirt", distance: [1200, 1600], note: "\u30C0\u30FC\u30C8\u30B9\u30D7\u30EA\u30F3\u30C8\u301C\u30DE\u30A4\u30EB\u3002" },
+  \u30DE\u30A4\u30F3\u30C9\u30E6\u30A2\u30D3\u30B9\u30B1\u30C3\u30C4: { surface: "dirt", distance: [1200, 1600], note: "\u30C0\u30FC\u30C8\u30B9\u30D7\u30EA\u30F3\u30C8\u301C\u30DE\u30A4\u30EB\u3002" },
+  \u30BB\u30A4\u30A6\u30F3\u30B3\u30A6\u30BB\u30A4: { surface: "dirt", distance: [1200, 1400], note: "\u30C0\u30FC\u30C8\u30B9\u30D7\u30EA\u30F3\u30C8\u3002" },
+  \u30DF\u30B9\u30C1\u30F4\u30A3\u30A2\u30B9\u30A2\u30EC\u30C3\u30AF\u30B9: { surface: "dirt", distance: [1200, 1400], note: "\u30C0\u30FC\u30C8\u30B9\u30D7\u30EA\u30F3\u30C8\u3002" }
+};
+const SIRE_NAMES = ["\u4E0D\u660E", ...Object.keys(SIRE_DATA)];
+function sireFit(sireKey, surfaceKey, distance) {
+  const sire = SIRE_DATA[sireKey];
+  if (!sire) return 0;
+  const surfaceMatch = sire.surface === "both" ? 1 : sire.surface === surfaceKey ? 1 : -0.6;
+  const [dmin, dmax] = sire.distance;
+  let distMatch;
+  if (distance >= dmin && distance <= dmax) distMatch = 1;
+  else {
+    const diff = distance < dmin ? dmin - distance : distance - dmax;
+    distMatch = diff <= 300 ? 0.3 : diff <= 600 ? -0.2 : -0.6;
+  }
+  return (surfaceMatch + distMatch) / 2;
+}
+const CLASS_DATA = {
+  \u65B0\u99AC: 1,
+  \u672A\u52DD\u5229: 1.5,
+  "1\u52DD\u30AF\u30E9\u30B9": 2.2,
+  "2\u52DD\u30AF\u30E9\u30B9": 2.9,
+  "3\u52DD\u30AF\u30E9\u30B9": 3.6,
+  "\u30AA\u30FC\u30D7\u30F3/L": 4.1,
+  G3: 4.4,
+  G2: 4.7,
+  G1: 5
+};
+const CLASS_NAMES = ["\u4E0D\u660E", ...Object.keys(CLASS_DATA)];
+function classScore(classKey) {
+  var _a;
+  return (_a = CLASS_DATA[classKey]) != null ? _a : 3;
+}
+const JOCKEY_DATA = {
+  // Sランク：全国リーディング上位の主力騎手
+  "C.\u30EB\u30E1\u30FC\u30EB": 5,
+  "\u5DDD\u7530\u5C06\u96C5": 5,
+  "\u6A2A\u5C71\u6B66\u53F2": 5,
+  "\u6238\u5D0E\u572D\u592A": 5,
+  "\u677E\u5C71\u5F18\u5E73": 5,
+  "\u798F\u6C38\u7950\u4E00": 5,
+  // Aランク：安定して上位に食い込む実力派
+  "\u6B66\u8C4A": 4.3,
+  "\u6C60\u6DFB\u8B19\u4E00": 4.3,
+  "\u5CA9\u7530\u671B\u6765": 4.3,
+  "\u6A2A\u5C71\u5178\u5F18": 4.3,
+  "\u5742\u4E95\u7460\u661F": 4.3,
+  "\u56E3\u91CE\u5927\u6210": 4.3,
+  "\u83C5\u539F\u660E\u826F": 4.3,
+  "D.\u30EC\u30FC\u30F3": 4.3,
+  "\u4E09\u6D66\u7687\u6210": 4.3,
+  "M.\u30C7\u30E0\u30FC\u30ED": 4.3,
+  // Bランク：中堅どころで勝ち星も多い
+  "\u7530\u8FBA\u88D5\u4FE1": 3.6,
+  "\u5E78\u82F1\u660E": 3.6,
+  "\u897F\u6751\u6DF3\u4E5F": 3.6,
+  "\u837B\u91CE\u6975": 3.6,
+  "\u4E38\u5C71\u5143\u6C17": 3.6,
+  "\u677E\u82E5\u98A8\u99AC": 3.6,
+  "\u77F3\u5DDD\u88D5\u7D00\u4EBA": 3.6,
+  "\u85E4\u5CA1\u4F51\u4ECB": 3.6,
+  "\u5CA9\u7530\u5EB7\u8AA0": 3.6,
+  "\u5317\u6751\u53CB\u4E00": 3.6
+};
+const JOCKEY_NAMES = Object.keys(JOCKEY_DATA);
+function jockeyScore(name) {
+  var _a;
+  const key = String(name || "").trim();
+  return (_a = JOCKEY_DATA[key]) != null ? _a : 3;
+}
+function marginBonus(position, margin) {
+  if (margin === void 0 || !Number.isFinite(margin)) return 0;
+  if (position === 1) return Math.min(0.6, margin * 0.3);
+  if (margin <= 0.3) return 0.3;
+  if (margin <= 1) return 0;
+  return -Math.min(0.6, (margin - 1) * 0.2);
+}
+function localRaceDiscount(score) {
+  return 3 + (score - 3) * 0.5;
+}
+function formScore(recentFormStr) {
+  const tokens = String(recentFormStr || "").split(/[,、\s]+/).map((s) => s.trim()).filter(Boolean);
+  if (tokens.length === 0) return null;
+  const weights = [1, 0.7, 0.5, 0.35, 0.25];
+  const posToScore = (p) => p === 1 ? 5 : p === 2 ? 4 : p === 3 ? 3.5 : p <= 5 ? 2.5 : 1;
+  let wSum = 0;
+  let vSum = 0;
+  tokens.slice(0, 5).forEach((tok, i) => {
+    var _a;
+    const [posStr, marginStr, flagStr] = tok.split("/");
+    const p = parseInt(posStr, 10);
+    if (!Number.isFinite(p) || p <= 0) return;
+    const margin = marginStr !== void 0 && marginStr !== "" && !/^(地|l|L)$/.test(marginStr) ? parseFloat(marginStr) : void 0;
+    const isLocal = /^(地|l|L)$/i.test(flagStr || "") || /^(地|l|L)$/i.test(marginStr || "");
+    let entryScore = posToScore(p) + marginBonus(p, margin);
+    if (isLocal) entryScore = localRaceDiscount(entryScore);
+    const w = (_a = weights[i]) != null ? _a : 0.15;
+    wSum += w;
+    vSum += entryScore * w;
+  });
+  return wSum > 0 ? Math.min(5, Math.max(1, vSum / wSum)) : null;
+}
+function weightBonus(weight, avgWeight) {
+  if (!Number.isFinite(weight) || !Number.isFinite(avgWeight)) return 0;
+  return Math.min(0.6, Math.max(-0.6, (avgWeight - weight) * 0.12));
+}
+function weightChangeBonus(change) {
+  if (!Number.isFinite(change)) return 0;
+  const abs = Math.abs(change);
+  if (abs <= 4) return 0.1;
+  if (abs <= 8) return 0;
+  if (abs <= 14) return -0.3;
+  return -0.6;
+}
+function blinkersBonus(on) {
+  return on ? 0.15 : 0;
+}
+function restBonus(weeks) {
+  if (!Number.isFinite(weeks)) return 0;
+  if (weeks < 2) return -0.3;
+  if (weeks <= 8) return 0.1;
+  if (weeks <= 16) return -0.1;
+  return -0.4;
+}
+function last3FBonus(sec) {
+  if (!Number.isFinite(sec)) return 0;
+  return Math.min(0.5, Math.max(-0.5, (35 - sec) * 0.15));
+}
+function selfRatingBonus(val) {
+  if (!Number.isFinite(val)) return 0;
+  return (val - 3) * 0.3;
+}
+function weightCarriedChangeBonus(change) {
+  if (!Number.isFinite(change)) return 0;
+  return Math.min(0.4, Math.max(-0.4, -change * 0.15));
+}
+function dayTrendBonus(h, dayTrend) {
+  if (!dayTrend) return 0;
+  let bonus = 0;
+  if (dayTrend.favoredWaku && dayTrend.favoredWaku.includes(h.waku)) bonus += 0.3;
+  if (dayTrend.favoredStyle && dayTrend.favoredStyle === h.style) bonus += 0.3;
+  if (dayTrend.favoredJockey && dayTrend.favoredJockey.trim() && h.jockey.trim() === dayTrend.favoredJockey.trim()) bonus += 0.3;
+  if (dayTrend.favoredSire && dayTrend.favoredSire.trim() && h.sire === dayTrend.favoredSire.trim()) bonus += 0.2;
+  if (dayTrend.favoredDamSire && dayTrend.favoredDamSire.trim() && h.damSire.trim() === dayTrend.favoredDamSire.trim()) bonus += 0.2;
+  return Math.min(0.6, bonus);
+}
+const CSV_ALIASES = {
+  name: ["\u99AC\u540D", "name", "horse"],
+  odds: ["\u30AA\u30C3\u30BA", "\u5358\u52DD\u30AA\u30C3\u30BA", "odds"],
+  style: ["\u811A\u8CEA", "style"],
+  rating: ["\u8A55\u4FA1", "\u7DCF\u5408\u8A55\u4FA1", "rating", "score"],
+  waku: ["\u67A0", "\u67A0\u756A", "waku", "post"],
+  horseNum: ["\u99AC\u756A", "no", "number", "num"],
+  sire: ["\u7236", "\u7A2E\u7261\u99AC", "sire"],
+  damSire: ["\u6BCD\u7236", "\u6BCD\u306E\u7236", "dam_sire"],
+  recentForm: ["\u76F4\u8FD1\u6210\u7E3E", "\u8FD1\u8D70", "recent_form", "form"],
+  horseClass: ["\u30AF\u30E9\u30B9", "\u683C\u4ED8\u3051", "class"],
+  weight: ["\u65A4\u91CF", "\u8CA0\u62C5\u91CD\u91CF", "weight"],
+  jockey: ["\u9A0E\u624B", "jockey"],
+  weightChange: ["\u99AC\u4F53\u91CD\u5897\u6E1B", "\u5897\u6E1B", "weight_change"],
+  blinkers: ["\u30D6\u30EA\u30F3\u30AB\u30FC", "B\u5370", "blinkers"],
+  restWeeks: ["\u4F11\u307F\u660E\u3051", "\u4E2D\u9593\u9031\u6570", "rest_weeks"],
+  last3F: ["\u4E0A\u304C\u308A3F", "\u4E0A\u304C\u308A", "last_3f"],
+  mudApt: ["\u9053\u60AA\u5DE7\u8005\u5EA6", "\u99AC\u5834\u9069\u6027", "mud_apt"],
+  distanceApt: ["\u8DDD\u96E2\u5B9F\u7E3E", "distance_apt"],
+  courseApt: ["\u30B3\u30FC\u30B9\u5B9F\u7E3E", "course_apt"],
+  weightCarriedChange: ["\u65A4\u91CF\u5909\u5316", "weight_carried_change"],
+  sex: ["\u6027\u5225", "\u6027", "sex", "gender"]
+};
+const STYLE_ALIASES = {
+  \u9003\u3052: "nige",
+  nige: "nige",
+  \u5148\u884C: "senko",
+  senko: "senko",
+  \u5DEE\u3057: "sashi",
+  sashi: "sashi",
+  \u8FFD\u8FBC: "oikomi",
+  oikomi: "oikomi"
+};
+const emptyHorse = (n) => ({
+  id: `h-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+  num: n,
+  waku: n,
+  name: "",
+  odds: "",
+  style: "senko",
+  rating: 3,
+  sire: "\u4E0D\u660E",
+  damSire: "",
+  recentForm: "",
+  horseClass: "\u4E0D\u660E",
+  weight: 55,
+  jockey: "",
+  weightChange: 0,
+  blinkers: false,
+  restWeeks: "",
+  last3F: "",
+  mudApt: 3,
+  distanceApt: 3,
+  courseApt: 3,
+  weightCarriedChange: 0,
+  sex: "\u4E0D\u660E"
+});
+const seedHorses = [
+  { ...emptyHorse(1), name: "\u30CF\u30CA\u30CB\u30B2\u30EB", odds: "4.5", style: "nige", rating: 3, sire: "\u30ED\u30FC\u30C9\u30AB\u30CA\u30ED\u30A2", damSire: "", recentForm: "1/0.5,2/0.2,1/0.8", horseClass: "3\u52DD\u30AF\u30E9\u30B9", weight: 57, jockey: "\u5DDD\u7530\u5C06\u96C5", weightChange: 2, blinkers: false, restWeeks: 4, last3F: 34.2, mudApt: 3, distanceApt: 4, courseApt: 3, weightCarriedChange: 0 },
+  { ...emptyHorse(2), name: "\u30BB\u30F3\u30B3\u30A6\u30DE\u30EB", odds: "3.0", style: "senko", rating: 4, sire: "\u30AD\u30F3\u30B0\u30AB\u30E1\u30CF\u30E1\u30CF", damSire: "", recentForm: "2/0.1,1/0.3,3/0.9", horseClass: "\u30AA\u30FC\u30D7\u30F3/L", weight: 58, jockey: "C.\u30EB\u30E1\u30FC\u30EB", weightChange: -2, blinkers: true, restWeeks: 6, last3F: 33.8, mudApt: 4, distanceApt: 4, courseApt: 4, weightCarriedChange: 1 },
+  { ...emptyHorse(3), name: "\u30B5\u30B7\u30B3\u30DF\u30E9\u30A4\u30C8", odds: "8.0", style: "sashi", rating: 4, sire: "\u30CF\u30FC\u30C4\u30AF\u30E9\u30A4", damSire: "", recentForm: "3/0.2,4/0.4,2/0.1", horseClass: "3\u52DD\u30AF\u30E9\u30B9", weight: 56, jockey: "\u7530\u8FBA\u88D5\u4FE1", weightChange: 4, blinkers: false, restWeeks: 3, last3F: 34.5, mudApt: 3, distanceApt: 3, courseApt: 4, weightCarriedChange: 0 },
+  { ...emptyHorse(4), name: "\u30AA\u30A4\u30B3\u30DF\u30B9\u30BF\u30FC", odds: "15.0", style: "oikomi", rating: 3, sire: "\u30A8\u30D4\u30D5\u30A1\u30CD\u30A4\u30A2", damSire: "", recentForm: "5/1.2,6/1.5,3/0.6", horseClass: "2\u52DD\u30AF\u30E9\u30B9", weight: 54, jockey: "", weightChange: -6, blinkers: false, restWeeks: 10, last3F: 35, mudApt: 2, distanceApt: 3, courseApt: 2, weightCarriedChange: -1 },
+  { ...emptyHorse(5), name: "\u30E2\u30A6\u30A4\u30C3\u30DD\u30F3", odds: "6.0", style: "senko", rating: 3, sire: "\u30C0\u30A4\u30EF\u30E1\u30B8\u30E3\u30FC", damSire: "", recentForm: "1/0.2,4/0.7,2/0.3", horseClass: "3\u52DD\u30AF\u30E9\u30B9", weight: 56, jockey: "\u6B66\u8C4A", weightChange: 0, blinkers: true, restWeeks: 5, last3F: 34, mudApt: 3, distanceApt: 4, courseApt: 3, weightCarriedChange: 0 }
+];
+function toNum(v, fallback = 0) {
+  const n = parseFloat(v);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+function normalizeKey(k) {
+  return String(k || "").trim().toLowerCase().replace(/\s+/g, "");
+}
+function findColumn(row, aliases) {
+  const keys = Object.keys(row);
+  for (const alias of aliases) {
+    const match = keys.find((k) => normalizeKey(k) === normalizeKey(alias));
+    if (match) return row[match];
+  }
+  return void 0;
+}
+function clamp15(v, fallback = 3) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(5, Math.max(1, n));
+}
+function parseStyle(v) {
+  const raw = String(v || "").trim();
+  return STYLE_ALIASES[raw] || STYLE_ALIASES[raw.toLowerCase()] || "senko";
+}
+function judgePace(horses) {
+  const nigeCount = horses.filter((h) => h.style === "nige").length;
+  const front = horses.filter((h) => h.style === "nige" || h.style === "senko");
+  const avgFrontRating = front.length ? front.reduce((a, h) => a + h.rating, 0) / front.length : 3;
+  if (nigeCount >= 3) return { scenario: "\u30CF\u30A4\u30DA\u30FC\u30B9", reason: `\u9003\u3052\u99AC\u304C${nigeCount}\u982D\u3067\u5148\u982D\u4E89\u3044\u304C\u6FC0\u5316\u3057\u3084\u3059\u3044\u3002` };
+  if (nigeCount === 0) return { scenario: "\u30B9\u30ED\u30FC\u30DA\u30FC\u30B9", reason: "\u9003\u3052\u99AC\u4E0D\u5728\u3067\u30CF\u30CA\u304C\u7DE9\u307F\u3084\u3059\u3044\u3002" };
+  if (nigeCount === 1 && avgFrontRating <= 3.2) return { scenario: "\u30B9\u30ED\u30FC\u30DA\u30FC\u30B9", reason: "\u9003\u3052\u99AC1\u982D\u3067\u30D7\u30EC\u30C3\u30B7\u30E3\u30FC\u304C\u5F31\u304F\u3001\u30DE\u30A4\u30DA\u30FC\u30B9\u306B\u306A\u308A\u3084\u3059\u3044\u3002" };
+  if (nigeCount >= 2 && avgFrontRating >= 3.8) return { scenario: "\u30CF\u30A4\u30DA\u30FC\u30B9", reason: "\u5148\u884C\u9663\u306E\u30EC\u30D9\u30EB\u304C\u9AD8\u304F\u3001\u7AF6\u308A\u5408\u3044\u304B\u3089\u901F\u3044\u6D41\u308C\u306B\u306A\u308A\u3084\u3059\u3044\u3002" };
+  return { scenario: "\u30DF\u30C9\u30EB\u30DA\u30FC\u30B9", reason: "\u5148\u884C\u4E89\u3044\u306F\u6A19\u6E96\u7684\u3067\u3001\u5927\u304D\u306A\u5D29\u308C\u306F\u8D77\u304D\u306B\u304F\u3044\u3002" };
+}
+function harvilleTop3(weights) {
+  const n = weights.length;
+  const W = weights.reduce((a, b) => a + b, 0);
+  if (W <= 0) return weights.map(() => 0);
+  const p1 = weights.map((w) => w / W);
+  const p2 = new Array(n).fill(0);
+  const p3 = new Array(n).fill(0);
+  for (let j = 0; j < n; j++) {
+    const wj = weights[j];
+    const remJ = W - wj;
+    if (remJ <= 0) continue;
+    for (let i = 0; i < n; i++) {
+      if (i === j) continue;
+      p2[i] += wj / W * (weights[i] / remJ);
+    }
+    for (let k = 0; k < n; k++) {
+      if (k === j) continue;
+      const wk = weights[k];
+      const remJK = remJ - wk;
+      if (remJK <= 0) continue;
+      for (let i = 0; i < n; i++) {
+        if (i === j || i === k) continue;
+        p3[i] += wj / W * (wk / remJ) * (weights[i] / remJK);
+      }
+    }
+  }
+  return weights.map((_, i) => Math.min(1, p1[i] + p2[i] + p3[i]));
+}
+function paceEffect(h, scenario, courseBias = 0, postBias = 0) {
+  const isFront = h.style === "nige" || h.style === "senko";
+  let scenarioSignal = 0;
+  if (scenario === "\u30CF\u30A4\u30DA\u30FC\u30B9") scenarioSignal = -1;
+  else if (scenario === "\u30B9\u30ED\u30FC\u30DA\u30FC\u30B9") scenarioSignal = 1;
+  const wakuNum = h.waku || 1;
+  const postPenalty = postBias * (wakuNum - 1) * 0.15;
+  const combined = scenarioSignal + courseBias - postPenalty;
+  return isFront ? combined : -combined;
+}
+function paceVerdict(h, scenario, courseBias = 0, postBias = 0) {
+  const effect = paceEffect(h, scenario, courseBias, postBias);
+  if (effect >= 0.6) return { label: "\u6709\u5229", tone: "text-emerald-400" };
+  if (effect <= -0.6) return { label: "\u4E0D\u5229", tone: "text-red-400" };
+  return { label: "\u4E2D\u7ACB", tone: "text-stone-400" };
+}
+const LEARN_COMPONENT_KEYS = [
+  { key: "sFit", label: "\u8840\u7D71\u9069\u6027" },
+  { key: "classBonus", label: "\u30AF\u30E9\u30B9" },
+  { key: "formBonus", label: "\u76F4\u8FD1\u6210\u7E3E" },
+  { key: "wBonus", label: "\u65A4\u91CF" },
+  { key: "jBonus", label: "\u9A0E\u624B" },
+  { key: "wcBonus", label: "\u99AC\u4F53\u91CD\u5897\u6E1B" },
+  { key: "bBonus", label: "\u30D6\u30EA\u30F3\u30AB\u30FC" },
+  { key: "rBonus", label: "\u4F11\u307F\u660E\u3051" },
+  { key: "l3Bonus", label: "\u4E0A\u304C\u308A3F" },
+  { key: "mudBonus", label: "\u9053\u60AA\u5DE7\u8005\u5EA6" },
+  { key: "distAptBonus", label: "\u8DDD\u96E2\u5B9F\u7E3E" },
+  { key: "courseAptBonus", label: "\u30B3\u30FC\u30B9\u5B9F\u7E3E" },
+  { key: "wccBonus", label: "\u65A4\u91CF\u5909\u5316" },
+  { key: "dtBonus", label: "\u672C\u65E5\u306E\u50BE\u5411" }
+];
+const MIN_LEARN_SAMPLES = 30;
+function pearsonCorr(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return 0;
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - mx, dy = ys[i] - my;
+    sxy += dx * dy;
+    sxx += dx * dx;
+    syy += dy * dy;
+  }
+  const denom = Math.sqrt(sxx * syy);
+  return denom > 0 ? sxy / denom : 0;
+}
+function computeLearnedWeights(log) {
+  const snapshots = [];
+  (log || []).forEach((entry) => {
+    (entry.horseSnapshots || []).forEach((s) => {
+      if (Number.isFinite(s.actualRank)) snapshots.push(s);
+    });
+  });
+  const weights = {};
+  LEARN_COMPONENT_KEYS.forEach(({ key }) => weights[key] = 1);
+  if (snapshots.length < MIN_LEARN_SAMPLES) {
+    return { weights, sampleCount: snapshots.length, active: false };
+  }
+  LEARN_COMPONENT_KEYS.forEach(({ key }) => {
+    const xs = snapshots.map((s) => s.components[key] || 0);
+    const ys = snapshots.map((s) => s.actualRank);
+    const spread = Math.max(...xs) - Math.min(...xs);
+    if (spread < 1e-6) return;
+    const corr = pearsonCorr(xs, ys);
+    weights[key] = Math.max(0.6, Math.min(1.4, 1 - corr * 0.6));
+  });
+  return { weights, sampleCount: snapshots.length, active: true };
+}
+function computeEV(horses) {
+  const valid = horses.filter((h) => h.name.trim() && toNum(h.odds) > 0);
+  if (valid.length === 0) return { rows: [], overround: 0 };
+  const exps = valid.map((h) => Math.exp(h.rating * TEMPERATURE));
+  const expSum = exps.reduce((a, b) => a + b, 0);
+  const rawModelProbs = exps.map((e) => e / expSum);
+  const inv = valid.map((h) => 1 / toNum(h.odds));
+  const overround = inv.reduce((a, b) => a + b, 0);
+  const marketProbs = inv.map((v) => overround > 0 ? v / overround : 0);
+  const blendedProbs = rawModelProbs.map(
+    (mp, i) => MARKET_BLEND * mp + (1 - MARKET_BLEND) * marketProbs[i]
+  );
+  const rows = valid.map((h, i) => {
+    const odds = toNum(h.odds);
+    const ev = blendedProbs[i] * odds;
+    return {
+      ...h,
+      odds,
+      modelProb: blendedProbs[i],
+      _rawModelProb: rawModelProbs[i],
+      _marketProb: marketProbs[i],
+      ev
+    };
+  });
+  rows.sort((a, b) => b.ev - a.ev);
+  return { rows, overround };
+}
+function Field({ label, children }) {
+  return /* @__PURE__ */ React.createElement("label", { className: "flex flex-col gap-1 text-xs text-emerald-300" }, /* @__PURE__ */ React.createElement("span", null, label), children);
+}
+const SIM_WAKU_COLORS = {
+  1: { bg: "#FFFFFF", fg: "#1A1A1A", border: "#B9B9B9" },
+  2: { bg: "#1A1A1A", fg: "#FFFFFF", border: "#1A1A1A" },
+  3: { bg: "#E14343", fg: "#FFFFFF", border: "#E14343" },
+  4: { bg: "#2F6FCB", fg: "#FFFFFF", border: "#2F6FCB" },
+  5: { bg: "#F2C230", fg: "#1A1A1A", border: "#F2C230" },
+  6: { bg: "#2E9B57", fg: "#FFFFFF", border: "#2E9B57" },
+  7: { bg: "#F08A24", fg: "#FFFFFF", border: "#F08A24" },
+  8: { bg: "#F08FB4", fg: "#1A1A1A", border: "#F08FB4" }
+};
+const SIM_STYLE_LABEL = { nige: "\u9003\u3052", senko: "\u5148\u884C", sashi: "\u5DEE\u3057", oikomi: "\u8FFD\u8FBC" };
+const SIM_STYLE_PROFILE = {
+  nige: [1.14, 1.08, 1, 0.9, 0.84],
+  senko: [1.05, 1.04, 1.02, 0.98, 0.95],
+  sashi: [0.92, 0.96, 1, 1.05, 1.1],
+  oikomi: [0.85, 0.9, 0.98, 1.08, 1.22]
+};
+function simPhaseLabel(remaining, distance) {
+  if (remaining <= 0) return "\u78BA\u5B9A";
+  if (remaining <= 300) return "\u30E9\u30B9\u30C8300m";
+  if (remaining <= distance * 0.35) return "\u76F4\u7DDA";
+  if (remaining >= distance - Math.min(200, distance * 0.15)) return "\u30C6\u30F3\u4E89\u3044";
+  return "\u30EC\u30FC\u30B9\u4E2D";
+}
+function simParseStraightMeters(straightStr, useLast) {
+  const nums = String(straightStr || "").match(/\d+/g) || ["400"];
+  const n = useLast && nums.length > 1 ? nums[nums.length - 1] : nums[0];
+  return parseInt(n, 10) || 400;
+}
+function simArcPoints(cx, cy, r, fromDeg, toDeg, steps) {
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const deg = fromDeg + (toDeg - fromDeg) * t;
+    const rad = deg * Math.PI / 180;
+    pts.push({ x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) });
+  }
+  return pts;
+}
+function simBuildTrack(courseName, surfaceKey, distance, straightStr, hand) {
+  const isStraightCourse = courseName === "\u65B0\u6F5F" && surfaceKey === "turf" && distance <= 1000;
+  if (isStraightCourse) {
+    return { isStraight: true, points: [{ x: 40, y: 120 }, { x: 400, y: 120 }], goalArcLen: 0, W: 440, H: 240 };
+  }
+  const W = 440, H = 240, marginX = 46, marginY = 26;
+  const availW = W - marginX * 2;
+  const meters = simParseStraightMeters(straightStr, false);
+  const straightFrac = Math.max(0.35, Math.min(0.7, 0.35 + (meters - 250) / (660 - 250) * 0.35));
+  const maxR = (H - marginY * 2) / 2;
+  let R = availW * (1 - straightFrac) / 2;
+  R = Math.max(34, Math.min(maxR, R));
+  const L = availW - R * 2;
+  const centerY = H / 2;
+  const topY = centerY - R;
+  const bottomY = centerY + R;
+  const leftCx = marginX + R;
+  const rightCx = W - marginX - R;
+  const D = { x: leftCx, y: bottomY };
+  const C = { x: rightCx, y: bottomY };
+  const B = { x: rightCx, y: topY };
+  const A = { x: leftCx, y: topY };
+  const rightArc = simArcPoints(rightCx, centerY, R, 90, -90, 28);
+  const leftArc = simArcPoints(leftCx, centerY, R, 270, 90, 28);
+  let points = [D, C, ...rightArc.slice(1, -1), B, A, ...leftArc.slice(1, -1)];
+  let circumference = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i], b = points[(i + 1) % points.length];
+    circumference += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  let goalArcLen = L * 0.92;
+  if (hand === "\u53F3\u56DE\u308A") {
+    points = points.slice().reverse();
+    goalArcLen = circumference - goalArcLen;
+  }
+  return { isStraight: false, points, goalArcLen, circumference, W, H };
+}
+function simTrackPathD(points, isStraight) {
+  if (isStraight) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+  return `M ${points[0].x} ${points[0].y} ` + points.slice(1).map((p) => `L ${p.x} ${p.y}`).join(" ") + " Z";
+}
+function simLoopPoint(arcLen, points, circumference) {
+  const n = points.length;
+  let target = ((arcLen % circumference) + circumference) % circumference;
+  for (let i = 0; i < n; i++) {
+    const a = points[i], b = points[(i + 1) % n];
+    const d = Math.hypot(b.x - a.x, b.y - a.y);
+    if (target <= d || i === n - 1) {
+      const t = d > 0 ? Math.max(0, Math.min(1, target / d)) : 0;
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    }
+    target -= d;
+  }
+  return points[0];
+}
+function simGetPoint(frac, track, raceArcSpan) {
+  if (track.isStraight) {
+    const a = track.points[0], b = track.points[1];
+    const t = Math.max(0, Math.min(1, frac));
+    return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+  }
+  const span = raceArcSpan !== void 0 ? raceArcSpan : track.circumference;
+  const startArcLen = track.goalArcLen - span;
+  return simLoopPoint(startArcLen + frac * span, track.points, track.circumference);
+}
+function RaceSimulatorView({ horses, distance, paceScenario, onClose, courseName, surfaceKey, straightStr, hand }) {
+  const [phase, setPhase] = useState("ready");
+  const [progressMap, setProgressMap] = useState({});
+  const [results, setResults] = useState([]);
+  const [runSeed, setRunSeed] = useState(null);
+  const [paceOverride, setPaceOverride] = useState(null);
+  const rafRef = useRef(null);
+  const stateRef = useRef({});
+  const effectivePaceScenario = paceOverride === "H" ? "\u30CF\u30A4\u30DA\u30FC\u30B9" : paceOverride === "S" ? "\u30B9\u30ED\u30FC\u30DA\u30FC\u30B9" : paceOverride === "M" ? "\u30DF\u30C9\u30EB\u30DA\u30FC\u30B9" : paceScenario;
+  const paceFactor = effectivePaceScenario === "\u30CF\u30A4\u30DA\u30FC\u30B9" ? 1.07 : effectivePaceScenario === "\u30B9\u30ED\u30FC\u30DA\u30FC\u30B9" ? 0.94 : 1;
+  const avgFinal = horses.length ? horses.reduce((a, h) => a + (h._finalScore || h.rating || 3), 0) / horses.length : 3;
+  const track = useMemo(
+    () => simBuildTrack(courseName, surfaceKey, distance, straightStr, hand),
+    [courseName, surfaceKey, distance, straightStr, hand]
+  );
+  const trackD = simTrackPathD(track.points, track.isStraight);
+  const realCirc = (COURSE_CIRCUMFERENCE_M[courseName] && COURSE_CIRCUMFERENCE_M[courseName][surfaceKey]) || 1800;
+  const raceArcSpan = track.isStraight ? 0 : distance / realCirc * track.circumference;
+  const finishP = track.isStraight ? track.points[1] : simLoopPoint(track.goalArcLen, track.points, track.circumference);
+  const beforeFinishP = track.isStraight ? track.points[0] : simLoopPoint(track.goalArcLen - 6, track.points, track.circumference);
+  const fdx = finishP.x - beforeFinishP.x, fdy = finishP.y - beforeFinishP.y;
+  const flen = Math.hypot(fdx, fdy) || 1;
+  const perp = { x: -fdy / flen * 16, y: fdx / flen * 16 };
+  useEffect(() => () => rafRef.current && cancelAnimationFrame(rafRef.current), []);
+  const startRace = useCallback(() => {
+    const seeds = {};
+    horses.forEach((h) => {
+      seeds[h.id || h.num] = { traveled: 0, finished: false, finishOrder: null, noiseSeed: Math.random(), luck: 1 + (Math.random() - 0.5) * 0.22 };
+    });
+    stateRef.current = { seeds, finishCount: 0, tick: 0 };
+    setProgressMap(Object.fromEntries(horses.map((h) => [h.id || h.num, 0])));
+    setResults([]);
+    setRunSeed(Math.floor(Math.random() * 1e6));
+    setPhase("racing");
+    const step = () => {
+      const st = stateRef.current;
+      st.tick += 1;
+      const segMeters = distance / 5;
+      let allDone = true;
+      const nextProgress = {};
+      horses.forEach((h) => {
+        const key = h.id || h.num;
+        const seed = st.seeds[key];
+        if (seed.finished) {
+          nextProgress[key] = distance;
+          return;
+        }
+        allDone = false;
+        const segIdx = Math.min(4, Math.floor(seed.traveled / segMeters));
+        const baseProfile = SIM_STYLE_PROFILE[h.style] || SIM_STYLE_PROFILE.senko;
+        const styleMul = baseProfile[segIdx];
+        const score = h._finalScore !== void 0 ? h._finalScore : h.rating || 3;
+        const ratingMul = Math.max(0.9, Math.min(1.12, 1 + (score - avgFinal) * 0.035));
+        const noise = 1 + Math.sin(st.tick * 0.7 + seed.noiseSeed * 50) * 0.04 + (Math.random() - 0.5) * 0.09;
+        const speed = 8 * styleMul * ratingMul * seed.luck * paceFactor * noise;
+        seed.traveled = Math.min(distance, seed.traveled + Math.max(1, speed));
+        if (seed.traveled >= distance && !seed.finished) {
+          seed.finished = true;
+          st.finishCount += 1;
+          seed.finishOrder = st.finishCount;
+        }
+        nextProgress[key] = seed.traveled;
+      });
+      setProgressMap({ ...nextProgress });
+      if (allDone || st.finishCount >= horses.length) {
+        const ranked = horses.map((h) => ({ ...h, order: st.seeds[h.id || h.num].finishOrder || 999 })).sort((a, b) => a.order - b.order);
+        setResults(ranked);
+        setPhase("finished");
+        return;
+      }
+      rafRef.current = requestAnimationFrame(step);
+    };
+    rafRef.current = requestAnimationFrame(step);
+  }, [horses, distance, paceFactor, avgFinal]);
+  const leaderProgress = Math.max(0, ...Object.values(progressMap), 0);
+  const remaining = Math.max(0, Math.round(distance - leaderProgress));
+  const label = phase === "ready" ? "\u767A\u8D70\u524D" : phase === "finished" ? "\u78BA\u5B9A" : simPhaseLabel(remaining, distance);
+  return /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-3" }, /* @__PURE__ */ React.createElement("div", { className: "bg-[#0F1B2E] max-w-sm w-full rounded-2xl overflow-hidden border border-[#1E2C46] max-h-[92vh] flex flex-col" }, /* @__PURE__ */ React.createElement("div", { className: "bg-[#12213B] px-4 py-3 flex items-center justify-between border-b border-[#1E2C46]" }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-col" }, /* @__PURE__ */ React.createElement("span", { className: "text-white font-bold text-sm" }, "\u30EC\u30FC\u30B9\u30B7\u30DF\u30E5\u30EC\u30FC\u30BF\u30FC"), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-amber-300 font-semibold" }, courseName, " \xB7 ", distance, "m \xB7 ", surfaceKey === "dirt" ? "\u30C0\u30FC\u30C8" : "\u829D", " \xB7 ", hand), !track.isStraight && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-white/50" }, "\u5468\u56DE", (raceArcSpan / track.circumference).toFixed(2), "\u5468\u5206\uFF08", distance, "m\uFF09")), /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "text-white/70 text-xs border border-white/30 rounded px-2 py-1" }, "\xD7 \u9589\u3058\u308B")), /* @__PURE__ */ React.createElement("div", { className: "relative bg-[#12213B]" }, /* @__PURE__ */ React.createElement("div", { className: "absolute top-2 left-2 right-2 flex justify-between z-10" }, /* @__PURE__ */ React.createElement("div", { className: "bg-white/95 rounded-xl px-3 py-1 flex items-baseline gap-1 shadow" }, /* @__PURE__ */ React.createElement("span", { className: "text-2xl font-extrabold text-[#1B2A4A] tabular-nums" }, phase === "ready" ? distance : remaining), /* @__PURE__ */ React.createElement("span", { className: "text-xs font-semibold text-[#1B2A4A]" }, "m")), /* @__PURE__ */ React.createElement("div", { className: "bg-[#D9A441] text-[#1B2A4A] rounded-xl px-3 py-2 font-bold text-xs self-center shadow" }, label)), /* @__PURE__ */ React.createElement("svg", { viewBox: `0 0 ${track.W || 440} ${track.H || 240}`, className: "w-full block" }, /* @__PURE__ */ React.createElement("rect", { x: "0", y: "0", width: track.W || 440, height: track.H || 240, fill: "#EDE6D3" }), /* @__PURE__ */ React.createElement("path", { d: trackD, fill: "none", stroke: "#C9A46A", strokeWidth: "34", strokeLinecap: track.isStraight ? "butt" : "round", strokeLinejoin: "round" }), /* @__PURE__ */ React.createElement("path", { d: trackD, fill: "none", stroke: "#8A6C3F", strokeWidth: "34", strokeLinecap: track.isStraight ? "butt" : "round", strokeLinejoin: "round", opacity: "0.16" }), /* @__PURE__ */ React.createElement("path", { d: trackD, fill: "none", stroke: "#FFFFFF", strokeWidth: "1.2", strokeDasharray: "5 7", opacity: "0.5", strokeLinejoin: "round" }), /* @__PURE__ */ React.createElement("line", { x1: finishP.x - perp.x, y1: finishP.y - perp.y, x2: finishP.x + perp.x, y2: finishP.y + perp.y, stroke: "#1B2A4A", strokeWidth: "3" }), /* @__PURE__ */ React.createElement("text", { x: finishP.x, y: finishP.y - perp.y - 20, textAnchor: "middle", fontSize: "11", fontWeight: "700", fill: "#1B2A4A" }, "GOAL"), horses.map((h) => {
+    const key = h.id || h.num;
+    const frac = distance > 0 ? Math.min(1, (progressMap[key] || 0) / distance) : 0;
+    const pt = simGetPoint(frac, track, raceArcSpan);
+    const wc = SIM_WAKU_COLORS[(h.waku - 1) % 8 + 1] || SIM_WAKU_COLORS[1];
+    return /* @__PURE__ */ React.createElement("g", { key, transform: `translate(${pt.x} ${pt.y})` }, /* @__PURE__ */ React.createElement("circle", { r: "13", fill: wc.bg, stroke: wc.border, strokeWidth: "2" }), /* @__PURE__ */ React.createElement("text", { textAnchor: "middle", dy: "5", fontSize: "13", fontWeight: "700", fill: wc.fg }, h.num));
+  }))), /* @__PURE__ */ React.createElement("div", { className: "bg-[#F6F3EC] p-4 overflow-y-auto" }, phase === "ready" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold text-[#5C5648]" }, "\u30DA\u30FC\u30B9 (\u81EA\u52D5: ", paceScenario, ")"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, ["S", "M", "H"].map((p) => /* @__PURE__ */ React.createElement("button", { key: p, onClick: () => setPaceOverride(paceOverride === p ? null : p), className: `w-9 h-9 rounded-lg text-sm font-extrabold border ${paceOverride === p ? "bg-[#1B2A4A] text-white border-[#1B2A4A]" : "bg-white text-[#5C5648] border-[#D8D2C2]"}` }, p)))), /* @__PURE__ */ React.createElement("button", { onClick: startRace, className: "w-full py-3 rounded-xl bg-[#1B2A4A] text-white font-extrabold text-sm" }, "\u25B6 \u30EC\u30FC\u30B9\u958B\u59CB")), phase === "racing" && /* @__PURE__ */ React.createElement("div", { className: "text-center text-[#5C5648] font-bold py-4" }, "\u30B7\u30DF\u30E5\u30EC\u30FC\u30B7\u30E7\u30F3\u4E2D..."), phase === "finished" && /* @__PURE__ */ React.createElement("div", { className: "flex flex-col gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-[9px] text-[#8A8474] text-right" }, "\u5B9F\u884CID: ", runSeed), results.slice(0, 3).map((h, i) => {
+    const wc = SIM_WAKU_COLORS[(h.waku - 1) % 8 + 1] || SIM_WAKU_COLORS[1];
+    return /* @__PURE__ */ React.createElement("div", { key: h.id || h.num, className: "flex items-center gap-3 bg-white rounded-xl px-3 py-2 border border-[#E5DFCE]" }, /* @__PURE__ */ React.createElement("span", { className: "font-extrabold text-[#1B2A4A] text-sm w-10" }, i + 1, "\u7740"), /* @__PURE__ */ React.createElement("div", { className: "w-6 h-6 rounded-full border flex items-center justify-center text-xs font-extrabold", style: { background: wc.bg, color: wc.fg, borderColor: wc.border } }, h.num), /* @__PURE__ */ React.createElement("span", { className: "font-bold text-[#1B2A4A] text-sm flex-1" }, h.name), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#8A8474] font-semibold" }, SIM_STYLE_LABEL[h.style] || ""));
+  }), /* @__PURE__ */ React.createElement("button", { onClick: startRace, className: "w-full py-3 rounded-xl bg-[#1B2A4A] text-white font-extrabold text-sm mt-2" }, "\u21BB \u3082\u3046\u4E00\u5EA6\u8D70\u3089\u305B\u308B")))));
+}
+function KeibaSimple() {
+  const [raceName, setRaceName] = useState("\u30B5\u30F3\u30D7\u30EB\u30EC\u30FC\u30B9\uFF08\u7C21\u6613\u7248\uFF09");
+  const [course, setCourse] = useState("\u6771\u4EAC");
+  const [distance, setDistance] = useState(1600);
+  const [surface, setSurface] = useState("\u829D");
+  const [trackCondition, setTrackCondition] = useState("\u826F");
+  const [dayTrend, setDayTrend] = useState({
+    favoredWaku: [],
+    favoredStyle: "",
+    favoredJockey: "",
+    favoredSire: "",
+    favoredDamSire: "",
+    upsetProne: false
+  });
+  const [showDayTrend, setShowDayTrend] = useState(false);
+  const [showSimulator, setShowSimulator] = useState(false);
+  const updateDayTrend = (field, value) => setDayTrend((prev) => ({ ...prev, [field]: value }));
+  const toggleFavoredWaku = (n) => setDayTrend((prev) => ({
+    ...prev,
+    favoredWaku: prev.favoredWaku.includes(n) ? prev.favoredWaku.filter((w) => w !== n) : [...prev.favoredWaku, n]
+  }));
+  const [horses, setHorses] = useState(seedHorses);
+  const [resultsLog, setResultsLog] = useState([]);
+  const learnedWeightsInfo = useMemo(() => computeLearnedWeights(resultsLog), [resultsLog]);
+  const [actualResultInput, setActualResultInput] = useState("");
+  const RESULTS_LOG_KEY = "keiba-simple:__results_log__";
+  const [savedRaces, setSavedRaces] = useState([]);
+  const [status, setStatus] = useState("");
+  const [showSireRef, setShowSireRef] = useState(false);
+  const [showJockeyRef, setShowJockeyRef] = useState(false);
+  const [expandedIds, setExpandedIds] = useState(() => /* @__PURE__ */ new Set());
+  const toggleExpanded = (id) => setExpandedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+  const fileInputRef = useRef(null);
+  const surfaceKey = surface === "\u30C0\u30FC\u30C8" ? "dirt" : "turf";
+  const courseInfo = useMemo(
+    () => resolveCourseConfig(course, surfaceKey, distance),
+    [course, surfaceKey, distance]
+  );
+  const pace = useMemo(() => judgePace(horses.filter((h) => h.name.trim())), [horses]);
+  const evInputHorses = useMemo(() => {
+    const validWeights = horses.filter((h) => h.name.trim() && Number.isFinite(h.weight)).map((h) => normalizedWeight(h));
+    const avgWeight = validWeights.length ? validWeights.reduce((a, b) => a + b, 0) / validWeights.length : 55;
+    const isWetTrack = trackCondition === "\u91CD" || trackCondition === "\u4E0D\u826F";
+    return horses.map((h) => {
+      const sFit = sireFit(h.sire, surfaceKey, distance);
+      const cScore = classScore(h.horseClass);
+      const fScore = formScore(h.recentForm);
+      const jScore = jockeyScore(h.jockey);
+      const classBonus = (cScore - 3) * 0.4;
+      const formBonus = fScore === null ? 0 : (fScore - 3) * 0.5;
+      const wBonus = weightBonus(normalizedWeight(h), avgWeight);
+      const jBonus = h.jockey.trim() ? (jScore - 3) * 0.4 : 0;
+      const wcBonus = weightChangeBonus(h.weightChange);
+      const bBonus = blinkersBonus(h.blinkers);
+      const rBonus = restBonus(parseFloat(h.restWeeks));
+      const l3Bonus = last3FBonus(parseFloat(h.last3F));
+      const mudBonus = isWetTrack ? selfRatingBonus(h.mudApt) : 0;
+      const distAptBonus = selfRatingBonus(h.distanceApt);
+      const courseAptBonus = selfRatingBonus(h.courseApt);
+      const wccBonus = weightCarriedChangeBonus(h.weightCarriedChange);
+      const dtBonus = dayTrendBonus(h, dayTrend);
+      const lw = learnedWeightsInfo.weights;
+      const effRating = Math.min(
+        7,
+        Math.max(
+          0.5,
+          h.rating + sFit * 0.6 * lw.sFit + classBonus * lw.classBonus + formBonus * lw.formBonus + wBonus * lw.wBonus + jBonus * lw.jBonus + wcBonus * lw.wcBonus + bBonus * lw.bBonus + rBonus * lw.rBonus + l3Bonus * lw.l3Bonus + mudBonus * lw.mudBonus + distAptBonus * lw.distAptBonus + courseAptBonus * lw.courseAptBonus + wccBonus * lw.wccBonus + dtBonus * lw.dtBonus
+        )
+      );
+      return {
+        ...h,
+        rating: effRating,
+        _sireFit: sFit,
+        _classScore: cScore,
+        _formScore: fScore,
+        _weightBonus: wBonus,
+        _jockeyScore: jScore,
+        _weightChangeBonus: wcBonus,
+        _blinkersBonus: bBonus,
+        _restBonus: rBonus,
+        _last3FBonus: l3Bonus,
+        _mudBonus: mudBonus,
+        _distAptBonus: distAptBonus,
+        _courseAptBonus: courseAptBonus,
+        _wccBonus: wccBonus,
+        _dtBonus: dtBonus,
+        _learnComponents: { sFit, classBonus, formBonus, wBonus, jBonus, wcBonus, bBonus, rBonus, l3Bonus, mudBonus, distAptBonus, courseAptBonus, wccBonus, dtBonus }
+      };
+    });
+  }, [horses, surfaceKey, distance, trackCondition, dayTrend, learnedWeightsInfo]);
+  const { rows, overround } = useMemo(() => computeEV(evInputHorses), [evInputHorses]);
+  const recommendedCount = rows.filter((r) => r.ev > EV_THRESHOLD).length;
+  const predictedOrder = useMemo(() => {
+    const valid = evInputHorses.filter((h) => h.name.trim());
+    const withScore = valid.map((h) => {
+      const pEffect = paceEffect(h, pace.scenario, courseInfo.bias, courseInfo.postBias);
+      const finalScore = h.rating + pEffect * 0.4;
+      return { ...h, _paceEffect: pEffect, _finalScore: finalScore };
+    });
+    withScore.sort((a, b) => b._finalScore - a._finalScore);
+    const weights = withScore.map((h) => Math.exp(h._finalScore * 1.3));
+    const weightSum = weights.reduce((a, b) => a + b, 0) || 1;
+    const top3Probs = harvilleTop3(weights);
+    return withScore.map((h, i) => ({
+      ...h,
+      rank: i + 1,
+      _top3Prob: top3Probs[i],
+      _winProbSim: weights[i] / weightSum
+    }));
+  }, [evInputHorses, pace.scenario, courseInfo.bias, courseInfo.postBias]);
+  const RANK_MARK = ["\u25CE", "\u25CB", "\u25B2", "\u25B3", "\u25B3"];
+  function kellyFraction(modelProb, odds) {
+    const b = odds - 1;
+    if (b <= 0) return 0;
+    const f = (b * modelProb - (1 - modelProb)) / b;
+    return Math.max(0, Math.min(0.06, f));
+  }
+  const betRecommendation = useMemo(() => {
+    if (predictedOrder.length < 3) return null;
+    const [h1, h2, h3, h4] = predictedOrder;
+    const gap12 = h1._winProbSim - h2._winProbSim;
+    const gap13 = h1._winProbSim - h3._winProbSim;
+    const evAll = rows.filter((r) => r.odds > 0).map((r) => ({ ...r, kelly: kellyFraction(r.modelProb, r.odds) })).sort((a, b) => b.ev - a.ev);
+    const evPositive = evAll.filter((r) => r.ev > EV_THRESHOLD);
+    const axisRow = rows.find((r) => r.id === h1.id);
+    const axisHasEdge = axisRow && axisRow.ev > EV_THRESHOLD;
+    const axisEvNote = axisRow ? axisRow.ev > EV_THRESHOLD ? `\u672C\u547D(${h1.name})\u306F\u30AA\u30C3\u30BA\u7684\u306B\u3082\u5999\u5473\u3042\u308A\uFF08EV${axisRow.ev.toFixed(2)}\uFF09` : `\u672C\u547D(${h1.name})\u306F\u30AA\u30C3\u30BA\u7684\u306B\u306F\u3084\u3084\u5272\u9AD8\uFF08\u904E\u5270\u4EBA\u6C17\u306E\u53EF\u80FD\u6027\u3001EV${axisRow.ev.toFixed(2)}\uFF09` : `\u672C\u547D(${h1.name})\u306F\u30AA\u30C3\u30BA\u672A\u5165\u529B\u306E\u305F\u3081\u671F\u5F85\u5024\u3092\u8A08\u7B97\u3067\u304D\u307E\u305B\u3093`;
+    let confidence, label, tone;
+    if (gap12 >= 0.13) {
+      confidence = "kata";
+      label = "\u5805\u3044\u6C7A\u7740\u304C\u6FC3\u539A";
+      tone = "text-emerald-400 border-emerald-500";
+    } else if (gap13 <= 0.05) {
+      confidence = "konsen";
+      label = "\u6DF7\u6226\u6A21\u69D8";
+      tone = "text-red-400 border-red-500";
+    } else {
+      confidence = "chukan";
+      label = "\u4E2D\u9593\u8A55\u4FA1\uFF08\u672C\u547D\u306F\u8EF8\u3001\u4E0B\u4F4D\u3082\u4E00\u8003\u306E\u4F59\u5730\uFF09";
+      tone = "text-amber-400 border-amber-500";
+    }
+    const picks = [];
+    picks.push({
+      type: "\u8907\u52DD\uFF08\u5805\u5B9F\u8EF8\uFF09",
+      detail: `${h1.name}\uFF08\u8907\u52DD\u570F\u5185\u76EE\u5B89${(h1._top3Prob * 100).toFixed(0)}%\uFF09`
+    });
+    if (confidence === "kata" && axisHasEdge) {
+      picks.push({ type: "\u5358\u52DD\uFF08\u52DD\u8CA0\u3069\u3053\u308D\uFF09", detail: `${h1.name}\uFF08\u672C\u547D\xD7\u5999\u5473\u304C\u4E00\u81F4\uFF09` });
+      picks.push({ type: "\u99AC\u5358", detail: `${h1.name} \u2192 ${h2.name} / ${h1.name} \u2192 ${h3.name}` });
+    } else {
+      picks.push({ type: "\u30EF\u30A4\u30C9", detail: `${h1.name} \u2014 ${h2.name} / ${h1.name} \u2014 ${h3.name}` });
+    }
+    const boxHorses = [h1, h2, h3, h4].filter(Boolean);
+    picks.push({
+      type: "3\u9023\u8907BOX\uFF08\u5B9F\u529B\u4E0A\u4F4D\uFF09",
+      detail: boxHorses.map((h) => h.name).join("\u30FB")
+    });
+    const valueHorse = evPositive.find((r) => r.id !== h1.id);
+    if (valueHorse) {
+      picks.push({
+        type: "\u5999\u5473\u306E\u4ED8\u3051\u8DB3\u3057\uFF08\u30D2\u30E2\u306B\u8FFD\u52A0\uFF09",
+        detail: `${valueHorse.name}\uFF08\u30AA\u30C3\u30BA${valueHorse.odds.toFixed(1)}\u500D\u30FBEV${valueHorse.ev.toFixed(
+          2
+        )}\uFF09\u3092\u3001\u4E0A\u306E\u30EF\u30A4\u30C9/3\u9023\u8907\u306E\u76F8\u624B\u306B\u52A0\u3048\u308B\u3068\u56DE\u53CE\u7387\u304C\u4E0A\u304C\u308A\u3084\u3059\u3044`
+      });
+    } else if (evPositive.length === 0) {
+      picks.push({
+        type: "\u5999\u5473\u30E1\u30E2",
+        detail: `EV${EV_THRESHOLD.toFixed(2)}\u3092\u8D85\u3048\u308B\u660E\u78BA\u306A\u5999\u5473\u99AC\u306F\u898B\u5F53\u305F\u308A\u307E\u305B\u3093\u3002\u30AA\u30C3\u30BA\u901A\u308A\u306E\u6C7A\u7740\u306B\u306A\u308A\u3084\u3059\u3044\u53EF\u80FD\u6027\u304C\u9AD8\u3044\u3067\u3059\u304C\u3001\u5805\u5B9F\u8EF8\u306E\u8907\u52DD\u30FB\u30EF\u30A4\u30C9\u306F\u6709\u52B9\u3067\u3059`
+      });
+    }
+    if (dayTrend.upsetProne) {
+      picks.push({
+        type: "\u672C\u65E5\u306E\u50BE\u5411\u30E1\u30E2",
+        detail: "\u300C\u914D\u5F53\u50BE\u5411:\u6CE2\u4E71\u300D\u5165\u529B\u4E2D\u3067\u3059\u3002\u5358\u52DD\u4E00\u70B9\u3088\u308A\u30EF\u30A4\u30C9\u30FB3\u9023\u8907BOX\u3067\u5E45\u3092\u6301\u305F\u305B\u308B\u306E\u304C\u7121\u96E3\u3067\u3059"
+      });
+    }
+    return { confidence, label, tone, axisEvNote, picks, h1, h2, h3, bestEVHorse: evPositive[0] || null, evPositive };
+  }, [predictedOrder, rows, dayTrend.upsetProne]);
+  const INDEX_KEY = STORAGE_PREFIX + "__index__";
+  const toSlug = (name) => name.trim().replace(/[\s\/\\'"]+/g, "_").slice(0, 150) || `race_${Date.now()}`;
+  const refreshSavedList = useCallback(async () => {
+    if (typeof window.storage === "undefined") {
+      setSavedRaces([]);
+      return;
+    }
+    try {
+      const idxRes = await window.storage.get(INDEX_KEY, false);
+      const idx = idxRes && idxRes.value ? JSON.parse(idxRes.value) : {};
+      setSavedRaces(Object.entries(idx).map(([slug, label]) => ({ slug, label })));
+    } catch (e) {
+      setSavedRaces([]);
+    }
+  }, []);
+  useEffect(() => {
+    refreshSavedList();
+  }, [refreshSavedList]);
+  useEffect(() => {
+    (async () => {
+      if (typeof window.storage === "undefined") return;
+      try {
+        const res = await window.storage.get(RESULTS_LOG_KEY, false);
+        if (res && res.value) setResultsLog(JSON.parse(res.value));
+      } catch (e) {
+      }
+    })();
+  }, []);
+  const persistResultsLog = async (log) => {
+    if (typeof window.storage === "undefined") {
+      return { ok: false, reason: "\u3053\u306E\u74B0\u5883\u3067\u306F\u30A2\u30D7\u30EA\u5185\u4FDD\u5B58(window.storage)\u304C\u4F7F\u3048\u307E\u305B\u3093" };
+    }
+    try {
+      const res = await window.storage.set(RESULTS_LOG_KEY, JSON.stringify(log), false);
+      if (!res) return { ok: false, reason: "\u30B9\u30C8\u30EC\u30FC\u30B8\u304C\u7A7A\u306E\u5FDC\u7B54\u3092\u8FD4\u3057\u307E\u3057\u305F" };
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, reason: e && e.message ? e.message : String(e) };
+    }
+  };
+  const recordResult = async () => {
+    if (!actualResultInput.trim() || predictedOrder.length === 0) {
+      setStatus("\u5B9F\u969B\u306E\u7740\u9806\uFF081\u7740,2\u7740,3\u7740\u306E\u99AC\u540D\u306A\u3069\uFF09\u3092\u5165\u529B\u3057\u3066\u304F\u3060\u3055\u3044");
+      return;
+    }
+    const actualNames = actualResultInput.split(/[,、\s]+/).map((s) => s.trim()).filter(Boolean);
+    const axis = predictedOrder[0];
+    const hitTansho = actualNames[0] === axis.name;
+    const hitFukusho = actualNames.slice(0, 3).includes(axis.name);
+    const horseSnapshots = predictedOrder.filter((h) => h.name.trim() && h._learnComponents).map((h) => {
+      const idx = actualNames.indexOf(h.name);
+      return { name: h.name, actualRank: idx >= 0 ? idx + 1 : void 0, components: h._learnComponents };
+    });
+    const entry = {
+      id: `log-${Date.now()}`,
+      raceName: raceName.trim() || "\u30EC\u30FC\u30B9",
+      course,
+      date: (/* @__PURE__ */ new Date()).toISOString(),
+      axisName: axis.name,
+      actual: actualNames.join(" \u2192 "),
+      hitTansho,
+      hitFukusho,
+      horseSnapshots
+    };
+    const newLog = [entry, ...resultsLog].slice(0, 100);
+    setResultsLog(newLog);
+    setActualResultInput("");
+    const saveResult = await persistResultsLog(newLog);
+    if (saveResult.ok) {
+      setStatus(`\u8A18\u9332\u30FB\u4FDD\u5B58\u3057\u307E\u3057\u305F\uFF08${axis.name}\uFF1A\u5358\u52DD${hitTansho ? "\u25CB" : "\xD7"} / \u8907\u52DD${hitFukusho ? "\u25CB" : "\xD7"}\uFF09`);
+    } else {
+      setStatus(
+        `\u753B\u9762\u306B\u306F\u8A18\u9332\u3057\u307E\u3057\u305F\u304C\u3001\u3053\u306E\u7AEF\u672B\u3067\u306F\u81EA\u52D5\u4FDD\u5B58\u304C\u3067\u304D\u307E\u305B\u3093\u3002\u4E0B\u306B\u30D0\u30C3\u30AF\u30A2\u30C3\u30D7\u7528\u306E\u30C6\u30AD\u30B9\u30C8\u3092\u8868\u793A\u3057\u305F\u306E\u3067\u3001\u5FC5\u305A\u30B3\u30D4\u30FC\u3057\u3066\u30E1\u30E2\u30A2\u30D7\u30EA\u306A\u3069\u306B\u8CBC\u308A\u4ED8\u3051\u3066\u304F\u3060\u3055\u3044\u3002`
+      );
+      showBackupText();
+    }
+  };
+  const deleteLogEntry = (id) => {
+    const newLog = resultsLog.filter((e) => e.id !== id);
+    setResultsLog(newLog);
+    persistResultsLog(newLog);
+  };
+  const logStats = useMemo(() => {
+    const total = resultsLog.length;
+    const tansho = resultsLog.filter((e) => e.hitTansho).length;
+    const fukusho = resultsLog.filter((e) => e.hitFukusho).length;
+    return { total, tansho, fukusho };
+  }, [resultsLog]);
+  const updateHorse = (id, field, value) => setHorses((hs) => hs.map((h) => h.id === id ? { ...h, [field]: value } : h));
+  const addHorse = () => setHorses((hs) => [...hs, emptyHorse(hs.length + 1)]);
+  const removeHorse = (id) => setHorses((hs) => hs.filter((h) => h.id !== id));
+  const handleCSVFile = useCallback((e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const imported = (results.data || []).map((row, idx) => {
+          const name = findColumn(row, CSV_ALIASES.name);
+          const odds = findColumn(row, CSV_ALIASES.odds);
+          if (!name || !odds) return null;
+          return {
+            ...emptyHorse(idx + 1),
+            name: String(name).trim(),
+            odds: String(odds).trim(),
+            style: parseStyle(findColumn(row, CSV_ALIASES.style)),
+            rating: clamp15(findColumn(row, CSV_ALIASES.rating)),
+            waku: parseInt(findColumn(row, CSV_ALIASES.waku), 10) || idx + 1,
+            num: parseInt(findColumn(row, CSV_ALIASES.horseNum), 10) || idx + 1,
+            sire: SIRE_DATA[findColumn(row, CSV_ALIASES.sire)] ? findColumn(row, CSV_ALIASES.sire) : "\u4E0D\u660E",
+            damSire: String(findColumn(row, CSV_ALIASES.damSire) || "").trim(),
+            recentForm: String(findColumn(row, CSV_ALIASES.recentForm) || "").trim(),
+            horseClass: CLASS_DATA[findColumn(row, CSV_ALIASES.horseClass)] !== void 0 ? findColumn(row, CSV_ALIASES.horseClass) : "\u4E0D\u660E",
+            weight: parseFloat(findColumn(row, CSV_ALIASES.weight)) || 55,
+            jockey: String(findColumn(row, CSV_ALIASES.jockey) || "").trim(),
+            weightChange: parseFloat(findColumn(row, CSV_ALIASES.weightChange)) || 0,
+            blinkers: /^(1|true|yes|b|○|あり)$/i.test(String(findColumn(row, CSV_ALIASES.blinkers) || "").trim()),
+            restWeeks: findColumn(row, CSV_ALIASES.restWeeks) || "",
+            last3F: findColumn(row, CSV_ALIASES.last3F) || "",
+            mudApt: clamp15(findColumn(row, CSV_ALIASES.mudApt)),
+            distanceApt: clamp15(findColumn(row, CSV_ALIASES.distanceApt)),
+            courseApt: clamp15(findColumn(row, CSV_ALIASES.courseApt)),
+            weightCarriedChange: parseFloat(findColumn(row, CSV_ALIASES.weightCarriedChange)) || 0,
+            sex: String(findColumn(row, CSV_ALIASES.sex) || "\u4E0D\u660E").trim()
+          };
+        }).filter(Boolean);
+        if (imported.length === 0) {
+          setStatus("CSV\u3092\u8AAD\u307F\u53D6\u308C\u307E\u305B\u3093\u3067\u3057\u305F\u3002\u300C\u99AC\u540D\u300D\u300C\u30AA\u30C3\u30BA\u300D\u5217\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+        } else {
+          setHorses(imported);
+          setStatus(`CSV\u304B\u3089${imported.length}\u982D\u3092\u8AAD\u307F\u8FBC\u307F\u307E\u3057\u305F`);
+        }
+      },
+      error: () => setStatus("CSV\u306E\u89E3\u6790\u306B\u5931\u6557\u3057\u307E\u3057\u305F")
+    });
+    e.target.value = "";
+  }, []);
+  const showBackupText = () => {
+    setShowExportText(true);
+    setTimeout(() => {
+      if (exportTextareaRef.current) {
+        exportTextareaRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+        exportTextareaRef.current.focus();
+        exportTextareaRef.current.select();
+      }
+    }, 150);
+  };
+  const saveRace = async () => {
+    const trimmedName = raceName.trim();
+    if (!trimmedName) {
+      setStatus("\u30EC\u30FC\u30B9\u540D\u3092\u5165\u529B\u3057\u3066\u304F\u3060\u3055\u3044");
+      return;
+    }
+    if (typeof window.storage === "undefined") {
+      setStatus("\u3053\u306E\u74B0\u5883\u3067\u306F\u30A2\u30D7\u30EA\u5185\u4FDD\u5B58\u304C\u4F7F\u3048\u307E\u305B\u3093\u3002\u4E0B\u306B\u8868\u793A\u3057\u305F\u30C6\u30AD\u30B9\u30C8\u3092\u30B3\u30D4\u30FC\u3057\u3066\u4FDD\u5B58\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+      showBackupText();
+      return;
+    }
+    try {
+      const slug = toSlug(trimmedName);
+      const setResult = await window.storage.set(
+        STORAGE_PREFIX + slug,
+        JSON.stringify({ raceName: trimmedName, horses, course, distance, surface, trackCondition, dayTrend }),
+        false
+      );
+      if (!setResult) {
+        setStatus("\u4FDD\u5B58\u306B\u5931\u6557\u3057\u307E\u3057\u305F(\u30B9\u30C8\u30EC\u30FC\u30B8\u304C\u7A7A\u306E\u5FDC\u7B54\u3092\u8FD4\u3057\u307E\u3057\u305F)\u3002\u4E0B\u306B\u8868\u793A\u3057\u305F\u30C6\u30AD\u30B9\u30C8\u3092\u30B3\u30D4\u30FC\u3057\u3066\u4FDD\u5B58\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+        showBackupText();
+        return;
+      }
+      const idxRes = await window.storage.get(INDEX_KEY, false).catch(() => null);
+      const idx = idxRes && idxRes.value ? JSON.parse(idxRes.value) : {};
+      idx[slug] = trimmedName;
+      await window.storage.set(INDEX_KEY, JSON.stringify(idx), false);
+      setStatus(`\u300C${trimmedName}\u300D\u3092\u4FDD\u5B58\u3057\u307E\u3057\u305F`);
+      refreshSavedList();
+    } catch (e) {
+      setStatus(`\u4FDD\u5B58\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${e && e.message ? e.message : String(e)}\u3002\u4E0B\u306B\u8868\u793A\u3057\u305F\u30C6\u30AD\u30B9\u30C8\u3092\u30B3\u30D4\u30FC\u3057\u3066\u4FDD\u5B58\u3057\u3066\u304F\u3060\u3055\u3044\u3002`);
+      showBackupText();
+    }
+  };
+  const loadRace = async (slug, label) => {
+    try {
+      const res = await window.storage.get(STORAGE_PREFIX + slug, false);
+      if (res && res.value) {
+        const data = JSON.parse(res.value);
+        setHorses(data.horses || []);
+        setCourse(data.course || "\u6771\u4EAC");
+        setDistance(data.distance || 1600);
+        setSurface(data.surface || "\u829D");
+        setTrackCondition(data.trackCondition || "\u826F");
+        setDayTrend(data.dayTrend || { favoredWaku: [], favoredStyle: "", favoredJockey: "", favoredSire: "", favoredDamSire: "", upsetProne: false });
+        setRaceName(data.raceName || label || slug);
+        setStatus(`\u300C${data.raceName || label}\u300D\u3092\u8AAD\u307F\u8FBC\u307F\u307E\u3057\u305F`);
+      }
+    } catch (e) {
+      setStatus(`\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${e && e.message ? e.message : String(e)}`);
+    }
+  };
+  const deleteRace = async (slug, label) => {
+    try {
+      await window.storage.delete(STORAGE_PREFIX + slug, false);
+      const idxRes = await window.storage.get(INDEX_KEY, false).catch(() => null);
+      const idx = idxRes && idxRes.value ? JSON.parse(idxRes.value) : {};
+      delete idx[slug];
+      await window.storage.set(INDEX_KEY, JSON.stringify(idx), false);
+      setStatus(`\u300C${label}\u300D\u3092\u524A\u9664\u3057\u307E\u3057\u305F`);
+      refreshSavedList();
+    } catch (e) {
+      setStatus(`\u524A\u9664\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${e && e.message ? e.message : String(e)}`);
+    }
+  };
+  const exportToFile = () => {
+    const trimmedName = raceName.trim() || "\u30EC\u30FC\u30B9";
+    const payload = JSON.stringify(
+      { raceName: trimmedName, horses, course, distance, surface, trackCondition, dayTrend, resultsLog },
+      null,
+      2
+    );
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${toSlug(trimmedName)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setStatus(`\u300C${trimmedName}\u300D\u3092\u30D5\u30A1\u30A4\u30EB\u306B\u4FDD\u5B58\u3057\u307E\u3057\u305F`);
+  };
+  const importFileInputRef = useRef(null);
+  const handleImportFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result));
+        setHorses(data.horses || []);
+        setCourse(data.course || "\u6771\u4EAC");
+        setDistance(data.distance || 1600);
+        setSurface(data.surface || "\u829D");
+        setTrackCondition(data.trackCondition || "\u826F");
+        setDayTrend(data.dayTrend || { favoredWaku: [], favoredStyle: "", favoredJockey: "", favoredSire: "", favoredDamSire: "", upsetProne: false });
+        if (data.resultsLog) setResultsLog(data.resultsLog);
+        setRaceName(data.raceName || file.name.replace(/\.json$/i, ""));
+        setStatus(`\u300C${data.raceName || file.name}\u300D\u3092\u30D5\u30A1\u30A4\u30EB\u304B\u3089\u8AAD\u307F\u8FBC\u307F\u307E\u3057\u305F`);
+      } catch (err) {
+        setStatus("\u30D5\u30A1\u30A4\u30EB\u306E\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F(JSON\u5F62\u5F0F\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044)");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+  const [showExportText, setShowExportText] = useState(false);
+  const [showImportText, setShowImportText] = useState(false);
+  const [importTextValue, setImportTextValue] = useState("");
+  const exportTextValue = useMemo(() => {
+    const trimmedName = raceName.trim() || "\u30EC\u30FC\u30B9";
+    return JSON.stringify({ raceName: trimmedName, horses, course, distance, surface, trackCondition, dayTrend, resultsLog }, null, 2);
+  }, [raceName, horses, course, distance, surface, trackCondition, dayTrend, resultsLog]);
+  const exportTextareaRef = useRef(null);
+  const copyExportText = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(exportTextValue);
+        setStatus("\u30AF\u30EA\u30C3\u30D7\u30DC\u30FC\u30C9\u306B\u30B3\u30D4\u30FC\u3057\u307E\u3057\u305F");
+        return;
+      }
+      throw new Error("clipboard API unavailable");
+    } catch (e) {
+      if (exportTextareaRef.current) {
+        exportTextareaRef.current.focus();
+        exportTextareaRef.current.select();
+      }
+      setStatus("\u81EA\u52D5\u30B3\u30D4\u30FC\u304C\u3067\u304D\u306A\u3044\u305F\u3081\u3001\u30C6\u30AD\u30B9\u30C8\u3092\u9078\u629E\u3057\u307E\u3057\u305F\u3002\u624B\u52D5\u3067\u30B3\u30D4\u30FC\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+    }
+  };
+  const importFromText = () => {
+    try {
+      const data = JSON.parse(importTextValue);
+      setHorses(data.horses || []);
+      setCourse(data.course || "\u6771\u4EAC");
+      setDistance(data.distance || 1600);
+      setSurface(data.surface || "\u829D");
+      setTrackCondition(data.trackCondition || "\u826F");
+      setDayTrend(data.dayTrend || { favoredWaku: [], favoredStyle: "", favoredJockey: "", favoredSire: "", favoredDamSire: "", upsetProne: false });
+      if (data.resultsLog) setResultsLog(data.resultsLog);
+      setRaceName(data.raceName || "\u5FA9\u5143\u3057\u305F\u30EC\u30FC\u30B9");
+      setStatus(`\u300C${data.raceName || "\u30EC\u30FC\u30B9"}\u300D\u3092\u30C6\u30AD\u30B9\u30C8\u304B\u3089\u5FA9\u5143\u3057\u307E\u3057\u305F`);
+      setShowImportText(false);
+      setImportTextValue("");
+    } catch (e) {
+      setStatus("\u30C6\u30AD\u30B9\u30C8\u306E\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002JSON\u5F62\u5F0F\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+    }
+  };
+  const bestBet = rows.find((r) => r.ev > EV_THRESHOLD);
+  const scenarioColor = pace.scenario === "\u30CF\u30A4\u30DA\u30FC\u30B9" ? "text-red-400 border-red-500" : pace.scenario === "\u30B9\u30ED\u30FC\u30DA\u30FC\u30B9" ? "text-sky-400 border-sky-500" : "text-amber-400 border-amber-500";
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "min-h-screen w-full bg-emerald-950 text-stone-100", style: { fontFamily: "'Zen Kaku Gothic New', sans-serif" } }, /* @__PURE__ */ React.createElement("style", null, `
+        @import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=Big+Shoulders+Display:wght@600;800&family=JetBrains+Mono:wght@400;600&display=swap');
+        .tote-mono { font-family: 'JetBrains Mono', monospace; }
+        .display-font { font-family: 'Big Shoulders Display', sans-serif; }
+      `), /* @__PURE__ */ React.createElement("div", { className: "border-b-4 border-amber-500 bg-emerald-900" }, /* @__PURE__ */ React.createElement("div", { className: "max-w-3xl mx-auto px-4 py-4 flex items-center justify-between flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] tracking-[0.3em] text-amber-400 uppercase mb-1" }, "Simple Race Board"), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: raceName,
+      onChange: (e) => setRaceName(e.target.value),
+      className: "bg-transparent border-b border-emerald-700 focus:border-amber-400 outline-none display-font text-2xl font-bold text-stone-50 tracking-wide",
+      style: { minWidth: "200px" }
+    }
+  )), /* @__PURE__ */ React.createElement("div", { className: "flex border border-emerald-800 items-center" }, /* @__PURE__ */ React.createElement("div", { className: "px-3 py-1.5 border-r border-emerald-800" }, /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-emerald-400 uppercase block mb-0.5" }, "\u7AF6\u99AC\u5834"), /* @__PURE__ */ React.createElement(
+    "select",
+    {
+      value: course,
+      onChange: (e) => setCourse(e.target.value),
+      className: "bg-transparent text-stone-100 text-sm outline-none"
+    },
+    COURSE_NAMES.map((c) => /* @__PURE__ */ React.createElement("option", { key: c, value: c, className: "bg-emerald-950" }, c))
+  )), /* @__PURE__ */ React.createElement("div", { className: "px-3 py-1.5 border-r border-emerald-800" }, /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-emerald-400 uppercase block mb-0.5" }, "\u8DDD\u96E2/\u99AC\u5834"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1 items-center" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "number",
+      value: distance,
+      onChange: (e) => setDistance(parseInt(e.target.value, 10) || 0),
+      className: "bg-transparent text-amber-300 text-sm outline-none w-14 tote-mono"
+    }
+  ), /* @__PURE__ */ React.createElement(
+    "select",
+    {
+      value: surface,
+      onChange: (e) => setSurface(e.target.value),
+      className: "bg-transparent text-stone-100 text-sm outline-none"
+    },
+    /* @__PURE__ */ React.createElement("option", { value: "\u829D", className: "bg-emerald-950" }, "\u829D"),
+    /* @__PURE__ */ React.createElement("option", { value: "\u30C0\u30FC\u30C8", className: "bg-emerald-950" }, "\u30C0\u30FC\u30C8")
+  ))), /* @__PURE__ */ React.createElement("div", { className: "px-3 py-1.5 border-r border-emerald-800" }, /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-emerald-400 uppercase block mb-0.5" }, "\u99AC\u5834\u72B6\u614B"), /* @__PURE__ */ React.createElement(
+    "select",
+    {
+      value: trackCondition,
+      onChange: (e) => setTrackCondition(e.target.value),
+      className: "bg-transparent text-stone-100 text-sm outline-none"
+    },
+    /* @__PURE__ */ React.createElement("option", { value: "\u826F", className: "bg-emerald-950" }, "\u826F"),
+    /* @__PURE__ */ React.createElement("option", { value: "\u7A0D\u91CD", className: "bg-emerald-950" }, "\u7A0D\u91CD"),
+    /* @__PURE__ */ React.createElement("option", { value: "\u91CD", className: "bg-emerald-950" }, "\u91CD"),
+    /* @__PURE__ */ React.createElement("option", { value: "\u4E0D\u826F", className: "bg-emerald-950" }, "\u4E0D\u826F")
+  )), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-center px-3 py-1.5 border-r border-emerald-800" }, /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-emerald-400 uppercase" }, "\u63A7\u9664\u7387"), /* @__PURE__ */ React.createElement("span", { className: "tote-mono text-amber-400 text-lg" }, ((overround - 1) * 100).toFixed(1), "%")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-center px-3 py-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-emerald-400 uppercase" }, "\u63A8\u5968"), /* @__PURE__ */ React.createElement("span", { className: "tote-mono text-amber-400 text-lg" }, recommendedCount))))), /* @__PURE__ */ React.createElement("div", { className: "max-w-3xl mx-auto px-4 py-6 space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-emerald-400 border border-emerald-800 bg-emerald-900/40 px-3 py-2" }, "\u26A0 \u7C21\u6613\u7248\u306F\u300C\u67A0\u30FB\u811A\u8CEA\u30FB\u8A55\u4FA1(1\u301C5)\u30FB\u7236\u30FB\u76F4\u8FD1\u6210\u7E3E\u30FB\u30AF\u30E9\u30B9\u30FB\u65A4\u91CF\u30FB\u9A0E\u624B\u300D\u306B\u52A0\u3048\u3001\u5404\u99AC\u306E\u300C\u25BC\u8A73\u7D30\u300D\u304B\u3089\u99AC\u4F53\u91CD\u5897\u6E1B\u30FB\u30D6\u30EA\u30F3\u30AB\u30FC\u30FB\u4F11\u307F\u660E\u3051\u9031\u6570\u30FB\u4E0A\u304C\u308A3F\u30FB\u9053\u60AA\u5DE7\u8005\u5EA6\u30FB\u8DDD\u96E2\u5B9F\u7E3E\u30FB\u30B3\u30FC\u30B9\u5B9F\u7E3E\u30FB\u65A4\u91CF\u5909\u5316\u3082\u53CD\u6620\u3067\u304D\u307E\u3059\u3002\u7AF6\u99AC\u5834\u30FB\u8DDD\u96E2\u30FB\u829D\u30C0\u30FC\u30C8\u30FB\u99AC\u5834\u72B6\u614B\u306B\u5FDC\u3058\u305F\u5C55\u958B\u50BE\u5411\u3001\u4E3B\u8981\u7A2E\u7261\u99AC\u306E\u9069\u6027\u3001\u4E3B\u8981\u9A0E\u624B\u306E\u7C21\u6613\u30E9\u30F3\u30AF\u306F\u5185\u8535\u30ED\u30B8\u30C3\u30AF\u3067\u81EA\u52D5\u53CD\u6620\u3055\u308C\u307E\u3059\u3002\u7CBE\u5EA6\u3088\u308A\u624B\u8EFD\u3055\u512A\u5148\u306E\u305F\u3081\u3001\u53C2\u8003\u7A0B\u5EA6\u306B\u3054\u5229\u7528\u304F\u3060\u3055\u3044\u3002"), /* @__PURE__ */ React.createElement("div", { className: `border-2 ${scenarioColor} p-3 flex items-center justify-between flex-wrap gap-2` }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-emerald-400 uppercase tracking-widest" }, "\u4E88\u60F3\u30DA\u30FC\u30B9"), /* @__PURE__ */ React.createElement("div", { className: `display-font text-2xl font-bold ${scenarioColor.split(" ")[0]}` }, pace.scenario)), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-emerald-300 max-w-xs" }, pace.reason)), /* @__PURE__ */ React.createElement("div", { className: "border border-emerald-800 bg-emerald-900/30 px-3 py-2 flex flex-wrap items-center gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-amber-400 uppercase tracking-wider text-[10px] whitespace-nowrap" }, course, "\uFF08", surface, "\u30FB", distance, "m\uFF09"), /* @__PURE__ */ React.createElement("span", { className: "text-emerald-300" }, courseInfo.hand, " / \u76F4\u7DDA", courseInfo.straight, " /", " ", /* @__PURE__ */ React.createElement("span", { className: courseInfo.bias > 0 ? "text-amber-400" : courseInfo.bias < 0 ? "text-sky-400" : "text-stone-300" }, courseInfo.bias > 0.3 ? "\u5148\u884C\u6709\u5229" : courseInfo.bias < -0.3 ? "\u5DEE\u3057\u6709\u5229" : "\u30D5\u30E9\u30C3\u30C8"), " / ", /* @__PURE__ */ React.createElement("span", { className: courseInfo.postBias >= 0.2 ? "text-red-400" : courseInfo.postBias >= 0.1 ? "text-amber-400" : "text-stone-300" }, courseInfo.postBias >= 0.2 ? "\u5185\u67A0\u6709\u5229\u304C\u5F37\u3044" : courseInfo.postBias >= 0.1 ? "\u5185\u67A0\u3084\u3084\u6709\u5229" : "\u67A0\u306E\u5F71\u97FF\u5C0F\u3055\u3044")), /* @__PURE__ */ React.createElement("span", { className: "text-emerald-400" }, courseInfo.note)), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-emerald-500" }, "\u76F4\u8FD1\u6210\u7E3E\u306F\u6700\u65B0\u30EC\u30FC\u30B9\u304B\u3089\u9806\u306B\u300C\u7740\u9806/\u7740\u5DEE\u300D\u3092\u30AB\u30F3\u30DE\u533A\u5207\u308A\u3067\u5165\u529B\uFF08\u4F8B: 1/0.5,3/0.8,2/0.3 = \u524D\u8D701\u77400.5\u5DEE \u2192 2\u8D70\u524D3\u77400.8\u5DEE \u2192 3\u8D70\u524D2\u77400.3\u5DEE\uFF09\u3002\u7740\u5DEE\u3092\u7701\u7565\u3057\u3066\u300C1,3,2\u300D\u3067\u3082\u53EF\u3002\u5730\u65B9\u7AF6\u99AC(NAR)\u3067\u306E\u8D70\u7834\u306F \u300C\u7740\u9806/\u7740\u5DEE/\u5730\u300D\u306E\u3088\u3046\u306B\u672B\u5C3E\u306B\u300C\u5730\u300D\u3092\u4ED8\u3051\u308B\u3068\u8A55\u4FA1\u3092\u4E2D\u7ACB\u5BC4\u308A\u306B\u5272\u308A\u5F15\u304D\u307E\u3059\uFF08\u4F8B: 2/0.1/\u5730\uFF09\u3002\u30AF\u30E9\u30B9\u306F\u73FE\u5728\u306E\u683C\u4ED8\u3051\u3092\u9078\u629E\u3002"), /* @__PURE__ */ React.createElement("div", { className: "border border-emerald-800 overflow-x-auto" }, /* @__PURE__ */ React.createElement("datalist", { id: "jockey-list" }, JOCKEY_NAMES.map((j) => /* @__PURE__ */ React.createElement("option", { key: j, value: j }))), /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm min-w-[990px]" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-emerald-900 text-amber-400 text-[11px] uppercase tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-12" }, "\u99AC\u756A"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-10" }, "\u67A0"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 text-left" }, "\u99AC\u540D"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-20" }, "\u30AA\u30C3\u30BA"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-20" }, "\u811A\u8CEA"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-16" }, "\u8A55\u4FA1"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-24" }, "\u7236(\u8840\u7D71)"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-24" }, "\u76F4\u8FD1\u6210\u7E3E"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-24" }, "\u30AF\u30E9\u30B9"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-14" }, "\u65A4\u91CF"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-24" }, "\u9A0E\u624B"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-16" }, "EV"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-16" }, "\u5C55\u958B"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-10" }, "\u8A73\u7D30"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 w-8" }))), /* @__PURE__ */ React.createElement("tbody", null, horses.map((h) => {
+    const row = rows.find((r) => r.id === h.id);
+    const v = paceVerdict(h, pace.scenario, courseInfo.bias, courseInfo.postBias);
+    const isRec = row && row.ev > EV_THRESHOLD;
+    return /* @__PURE__ */ React.createElement(React.Fragment, { key: h.id }, /* @__PURE__ */ React.createElement("tr", { className: `border-t border-emerald-800/60 ${isRec ? "bg-amber-500/10" : ""}` }, /* @__PURE__ */ React.createElement("td", { className: "px-2 py-1" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "number",
+        value: h.num,
+        min: 1,
+        max: 18,
+        onChange: (e) => updateHorse(h.id, "num", parseInt(e.target.value, 10) || 1),
+        className: "bg-transparent border-b border-emerald-800 focus:border-amber-400 outline-none w-10 tote-mono text-amber-300 font-bold"
+      }
+    )), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-1" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "number",
+        value: h.waku,
+        min: 1,
+        max: 18,
+        onChange: (e) => updateHorse(h.id, "waku", parseInt(e.target.value, 10) || 1),
+        className: "bg-transparent border-b border-emerald-800 focus:border-amber-400 outline-none w-10 tote-mono text-emerald-300"
+      }
+    )), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-1" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        value: h.name,
+        onChange: (e) => updateHorse(h.id, "name", e.target.value),
+        placeholder: "\u99AC\u540D",
+        className: "bg-transparent border-b border-emerald-800 focus:border-amber-400 outline-none w-full text-stone-100"
+      }
+    )), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-1" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        value: h.odds,
+        onChange: (e) => updateHorse(h.id, "odds", e.target.value),
+        placeholder: "0.0",
+        inputMode: "decimal",
+        className: "bg-transparent border-b border-emerald-800 focus:border-amber-400 outline-none w-16 tote-mono text-amber-300"
+      }
+    )), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-1 text-center" }, /* @__PURE__ */ React.createElement(
+      "select",
+      {
+        value: h.style,
+        onChange: (e) => updateHorse(h.id, "style", e.target.value),
+        className: `bg-emerald-950 border border-emerald-800 text-xs px-1 py-0.5 ${styleByKey[h.style].text}`
+      },
+      STYLES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.key, value: s.key }, s.label))
+    )), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-1 text-center" }, /* @__PURE__ */ React.createElement(
+      "select",
+      {
+        value: h.rating,
+        onChange: (e) => updateHorse(h.id, "rating", parseInt(e.target.value, 10)),
+        className: "bg-emerald-950 border border-emerald-800 text-stone-100 text-xs px-1 py-0.5"
+      },
+      [1, 2, 3, 4, 5].map((n) => /* @__PURE__ */ React.createElement("option", { key: n, value: n }, n))
+    )), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-1 text-center" }, (() => {
+      const fit = sireFit(h.sire, surfaceKey, distance);
+      const fitColor = fit >= 0.3 ? "text-emerald-400" : fit <= -0.3 ? "text-red-400" : "text-stone-400";
+      return /* @__PURE__ */ React.createElement(
+        "select",
+        {
+          value: h.sire,
+          onChange: (e) => updateHorse(h.id, "sire", e.target.value),
+          className: `bg-emerald-950 border border-emerald-800 text-[10px] px-1 py-0.5 w-24 ${fitColor}`
+        },
+        SIRE_NAMES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))
+      );
+    })()), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-1" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        value: h.recentForm,
+        onChange: (e) => updateHorse(h.id, "recentForm", e.target.value),
+        placeholder: "\u4F8B: 1/0.5,3/0.8",
+        className: "bg-transparent border-b border-emerald-800 focus:border-amber-400 outline-none w-28 tote-mono text-[10px] text-stone-200"
+      }
+    )), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-1 text-center" }, /* @__PURE__ */ React.createElement(
+      "select",
+      {
+        value: h.horseClass,
+        onChange: (e) => updateHorse(h.id, "horseClass", e.target.value),
+        className: "bg-emerald-950 border border-emerald-800 text-stone-100 text-[10px] px-1 py-0.5 w-20"
+      },
+      CLASS_NAMES.map((c) => /* @__PURE__ */ React.createElement("option", { key: c, value: c }, c))
+    )), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-1" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "number",
+        step: "0.5",
+        value: h.weight,
+        onChange: (e) => updateHorse(h.id, "weight", parseFloat(e.target.value) || 55),
+        className: "bg-transparent border-b border-emerald-800 focus:border-amber-400 outline-none w-12 tote-mono text-stone-200 text-xs"
+      }
+    )), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-1" }, (() => {
+      const isKnown = JOCKEY_DATA[h.jockey.trim()] !== void 0;
+      const jColor = isKnown ? "text-amber-300" : "text-stone-400";
+      return /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          list: "jockey-list",
+          value: h.jockey,
+          onChange: (e) => updateHorse(h.id, "jockey", e.target.value),
+          placeholder: "\u9A0E\u624B\u540D",
+          className: `bg-transparent border-b border-emerald-800 focus:border-amber-400 outline-none w-20 text-[11px] ${jColor}`
+        }
+      );
+    })()), /* @__PURE__ */ React.createElement("td", { className: `px-2 py-1 text-center tote-mono font-bold ${isRec ? "text-amber-400" : "text-stone-500"}` }, row ? row.ev.toFixed(2) : "-"), /* @__PURE__ */ React.createElement("td", { className: `px-2 py-1 text-center text-xs font-bold ${v.tone}` }, v.label), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-1 text-center" }, /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => toggleExpanded(h.id),
+        className: `text-xs px-1.5 py-0.5 border ${expandedIds.has(h.id) ? "border-amber-400 text-amber-400" : "border-emerald-700 text-emerald-400"}`
+      },
+      expandedIds.has(h.id) ? "\u25B2" : "\u25BC"
+    )), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-1 text-center" }, /* @__PURE__ */ React.createElement("button", { onClick: () => removeHorse(h.id), className: "text-emerald-500 hover:text-red-400 text-xs" }, "\u2715"))), expandedIds.has(h.id) && /* @__PURE__ */ React.createElement("tr", { className: "bg-emerald-950/60 border-t border-emerald-800/40" }, /* @__PURE__ */ React.createElement("td", { colSpan: 14, className: "px-4 py-3" }, /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs" }, /* @__PURE__ */ React.createElement(Field, { label: "\u99AC\u4F53\u91CD\u5897\u6E1B(kg)" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "number",
+        value: h.weightChange,
+        onChange: (e) => updateHorse(h.id, "weightChange", parseFloat(e.target.value) || 0),
+        className: "bg-emerald-950 border border-emerald-800 px-1.5 py-1 w-full tote-mono text-stone-200"
+      }
+    )), /* @__PURE__ */ React.createElement(Field, { label: "\u30D6\u30EA\u30F3\u30AB\u30FC" }, /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-1.5 text-stone-200" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "checkbox",
+        checked: h.blinkers,
+        onChange: (e) => updateHorse(h.id, "blinkers", e.target.checked),
+        className: "accent-amber-500"
+      }
+    ), "\u7740\u7528")), /* @__PURE__ */ React.createElement(Field, { label: "\u4F11\u307F\u660E\u3051(\u9031)" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "number",
+        value: h.restWeeks,
+        onChange: (e) => updateHorse(h.id, "restWeeks", e.target.value),
+        placeholder: "\u4F8B: 4",
+        className: "bg-emerald-950 border border-emerald-800 px-1.5 py-1 w-full tote-mono text-stone-200"
+      }
+    )), /* @__PURE__ */ React.createElement(Field, { label: "\u4E0A\u304C\u308A3F(\u79D2)" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "number",
+        step: "0.1",
+        value: h.last3F,
+        onChange: (e) => updateHorse(h.id, "last3F", e.target.value),
+        placeholder: "\u4F8B: 34.5",
+        className: "bg-emerald-950 border border-emerald-800 px-1.5 py-1 w-full tote-mono text-stone-200"
+      }
+    )), /* @__PURE__ */ React.createElement(Field, { label: "\u9053\u60AA\u5DE7\u8005\u5EA6" }, /* @__PURE__ */ React.createElement(
+      "select",
+      {
+        value: h.mudApt,
+        onChange: (e) => updateHorse(h.id, "mudApt", parseInt(e.target.value, 10)),
+        className: "bg-emerald-950 border border-emerald-800 px-1.5 py-1 w-full text-stone-200"
+      },
+      [1, 2, 3, 4, 5].map((n) => /* @__PURE__ */ React.createElement("option", { key: n, value: n }, n))
+    )), /* @__PURE__ */ React.createElement(Field, { label: "\u8DDD\u96E2\u5B9F\u7E3E" }, /* @__PURE__ */ React.createElement(
+      "select",
+      {
+        value: h.distanceApt,
+        onChange: (e) => updateHorse(h.id, "distanceApt", parseInt(e.target.value, 10)),
+        className: "bg-emerald-950 border border-emerald-800 px-1.5 py-1 w-full text-stone-200"
+      },
+      [1, 2, 3, 4, 5].map((n) => /* @__PURE__ */ React.createElement("option", { key: n, value: n }, n))
+    )), /* @__PURE__ */ React.createElement(Field, { label: "\u30B3\u30FC\u30B9\u5B9F\u7E3E" }, /* @__PURE__ */ React.createElement(
+      "select",
+      {
+        value: h.courseApt,
+        onChange: (e) => updateHorse(h.id, "courseApt", parseInt(e.target.value, 10)),
+        className: "bg-emerald-950 border border-emerald-800 px-1.5 py-1 w-full text-stone-200"
+      },
+      [1, 2, 3, 4, 5].map((n) => /* @__PURE__ */ React.createElement("option", { key: n, value: n }, n))
+    )), /* @__PURE__ */ React.createElement(Field, { label: "\u65A4\u91CF\u5909\u5316(kg)" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "number",
+        step: "0.5",
+        value: h.weightCarriedChange,
+        onChange: (e) => updateHorse(h.id, "weightCarriedChange", parseFloat(e.target.value) || 0),
+        className: "bg-emerald-950 border border-emerald-800 px-1.5 py-1 w-full tote-mono text-stone-200"
+      }
+    )), /* @__PURE__ */ React.createElement(Field, { label: "\u6BCD\u7236(\u672C\u65E5\u306E\u50BE\u5411\u3067\u4F7F\u7528)" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        value: h.damSire,
+        onChange: (e) => updateHorse(h.id, "damSire", e.target.value),
+        placeholder: "\u4F8B: \u30B5\u30F3\u30C7\u30FC\u30B5\u30A4\u30EC\u30F3\u30B9",
+        className: "bg-emerald-950 border border-emerald-800 px-1.5 py-1 w-full text-[11px] text-stone-200"
+      }
+    ))), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-emerald-600 pt-2" }, "\u9053\u60AA\u5DE7\u8005\u5EA6\u306F\u300C\u99AC\u5834\u72B6\u614B\u300D\u304C\u91CD\u30FB\u4E0D\u826F\u306E\u3068\u304D\u306E\u307F\u52A0\u70B9/\u6E1B\u70B9\u306B\u53CD\u6620\u3055\u308C\u307E\u3059\u3002\u4F11\u307F\u660E\u3051\u30FB\u4E0A\u304C\u308A3F\u306F\u7A7A\u6B04\u306A\u3089\u88DC\u6B63\u306A\u3057(\u30CB\u30E5\u30FC\u30C8\u30E9\u30EB)\u6271\u3044\u3067\u3059\u3002"))));
+  }))), /* @__PURE__ */ React.createElement("div", { className: "px-2 py-2 bg-emerald-950 flex flex-wrap gap-2 items-center" }, /* @__PURE__ */ React.createElement("button", { onClick: addHorse, className: "text-xs px-3 py-1.5 border border-emerald-700 text-emerald-300 hover:border-amber-400 hover:text-amber-400" }, "+ \u99AC\u3092\u8FFD\u52A0"), /* @__PURE__ */ React.createElement("button", { onClick: () => fileInputRef.current && fileInputRef.current.click(), className: "text-xs px-3 py-1.5 border border-amber-600 text-amber-400 hover:bg-amber-500 hover:text-emerald-950" }, "CSV\u304B\u3089\u8AAD\u307F\u8FBC\u3080"), /* @__PURE__ */ React.createElement("input", { ref: fileInputRef, type: "file", accept: ".csv,text/csv", onChange: handleCSVFile, className: "hidden" }), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-emerald-500" }, "\u5217\u540D: \u99AC\u756A / \u67A0 / \u99AC\u540D / \u30AA\u30C3\u30BA / \u811A\u8CEA / \u8A55\u4FA1 / \u7236 / \u76F4\u8FD1\u6210\u7E3E / \u30AF\u30E9\u30B9 / \u65A4\u91CF / \u9A0E\u624B / \u99AC\u4F53\u91CD\u5897\u6E1B / \u30D6\u30EA\u30F3\u30AB\u30FC / \u4F11\u307F\u660E\u3051 / \u4E0A\u304C\u308A3F / \u9053\u60AA\u5DE7\u8005\u5EA6 / \u8DDD\u96E2\u5B9F\u7E3E / \u30B3\u30FC\u30B9\u5B9F\u7E3E / \u65A4\u91CF\u5909\u5316"))), /* @__PURE__ */ React.createElement("div", { className: "border border-emerald-800" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setShowSireRef((s) => !s),
+      className: "w-full flex justify-between items-center px-4 py-2 bg-emerald-900/60 text-left"
+    },
+    /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold tracking-wide text-amber-400" }, "\u7A2E\u7261\u99AC\u30EA\u30D5\u30A1\u30EC\u30F3\u30B9\uFF08\u5185\u8535\u30C7\u30FC\u30BF\u30FB", Object.keys(SIRE_DATA).length, "\u982D\uFF09"),
+    /* @__PURE__ */ React.createElement("span", { className: "text-emerald-400 text-xs" }, showSireRef ? "\u9589\u3058\u308B \u25B2" : "\u958B\u304F \u25BC")
+  ), showSireRef && /* @__PURE__ */ React.createElement("div", { className: "p-3 grid grid-cols-1 sm:grid-cols-2 gap-2 bg-emerald-950 text-xs" }, Object.entries(SIRE_DATA).map(([name, s]) => /* @__PURE__ */ React.createElement("div", { key: name, className: "border-l-2 border-emerald-700 pl-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-amber-300 font-bold" }, name), " ", /* @__PURE__ */ React.createElement("span", { className: "text-emerald-500" }, "(", s.surface === "turf" ? "\u829D" : s.surface === "dirt" ? "\u30C0\u30FC\u30C8" : "\u829D/\u30C0\u30FC\u30C8", "\u30FB", s.distance[0], "-", s.distance[1], "m)"), /* @__PURE__ */ React.createElement("p", { className: "text-emerald-400" }, s.note))), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-emerald-600 sm:col-span-2 pt-1" }, "\u203B\u4E00\u822C\u7684\u306B\u77E5\u3089\u308C\u308B\u7523\u99D2\u50BE\u5411\u306E\u76EE\u5B89\u3067\u3059\u3002\u500B\u4F53\u5DEE\u304C\u5927\u304D\u304F\u3001\u78BA\u5B9A\u7684\u306A\u9069\u6027\u3067\u306F\u3042\u308A\u307E\u305B\u3093\u3002"))), /* @__PURE__ */ React.createElement("div", { className: "border border-emerald-800" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setShowJockeyRef((s) => !s),
+      className: "w-full flex justify-between items-center px-4 py-2 bg-emerald-900/60 text-left"
+    },
+    /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold tracking-wide text-amber-400" }, "\u9A0E\u624B\u30EA\u30D5\u30A1\u30EC\u30F3\u30B9\uFF08\u5185\u8535\u30C7\u30FC\u30BF\u30FB", JOCKEY_NAMES.length, "\u540D\uFF09"),
+    /* @__PURE__ */ React.createElement("span", { className: "text-emerald-400 text-xs" }, showJockeyRef ? "\u9589\u3058\u308B \u25B2" : "\u958B\u304F \u25BC")
+  ), showJockeyRef && /* @__PURE__ */ React.createElement("div", { className: "p-3 bg-emerald-950 text-xs space-y-2" }, [5, 4.3, 3.6].map((tier) => /* @__PURE__ */ React.createElement("div", { key: tier }, /* @__PURE__ */ React.createElement("span", { className: "text-amber-300 font-bold" }, tier === 5 ? "S\u30E9\u30F3\u30AF" : tier === 4.3 ? "A\u30E9\u30F3\u30AF" : "B\u30E9\u30F3\u30AF"), /* @__PURE__ */ React.createElement("p", { className: "text-emerald-400" }, JOCKEY_NAMES.filter((n) => JOCKEY_DATA[n] === tier).join("\u3001")))), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-emerald-600 pt-1" }, "\u203B\u4E00\u822C\u7684\u306A\u30EA\u30FC\u30C7\u30A3\u30F3\u30B0\u4E0A\u4F4D\u9A0E\u624B\u3092\u7C21\u6613\u7684\u306B\u968E\u5C64\u5316\u3057\u305F\u76EE\u5B89\u3067\u3059\u3002\u6700\u65B0\u306E\u5E74\u9593\u6210\u7E3E\u3068\u306F\u30BA\u30EC\u308B\u5834\u5408\u304C\u3042\u308A\u307E\u3059\u3002\u30EA\u30B9\u30C8\u5916\u306E\u9A0E\u624B\u306F\u30CB\u30E5\u30FC\u30C8\u30E9\u30EB(\u88DC\u6B63\u306A\u3057)\u3068\u3057\u3066\u6271\u308F\u308C\u307E\u3059\u3002"))), /* @__PURE__ */ React.createElement("div", { className: "border-2 border-sky-600" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setShowDayTrend((s) => !s),
+      className: "w-full flex justify-between items-center px-4 py-2 bg-emerald-900/60 text-left"
+    },
+    /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold tracking-wide text-sky-400" }, "\u672C\u65E5\u306E\u50BE\u5411\uFF08\u4E00\u6642\u53CD\u6620\u30FBnetkeiba\u300C\u30EC\u30FC\u30B9\u50BE\u5411\u300D\u306A\u3069\u304B\u3089\u5165\u529B\uFF09"),
+    /* @__PURE__ */ React.createElement("span", { className: "text-emerald-400 text-xs" }, showDayTrend ? "\u9589\u3058\u308B \u25B2" : "\u958B\u304F \u25BC")
+  ), showDayTrend && /* @__PURE__ */ React.createElement("div", { className: "p-4 space-y-3 bg-emerald-950 text-xs" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-sky-300 block mb-1" }, "\u597D\u8ABF\u67A0\u756A\uFF08\u8907\u6570\u9078\u629E\u53EF\uFF09"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, [1, 2, 3, 4, 5, 6, 7, 8].map((n) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: n,
+      onClick: () => toggleFavoredWaku(n),
+      className: `w-8 h-8 border text-xs ${dayTrend.favoredWaku.includes(n) ? "bg-sky-500 border-sky-400 text-emerald-950 font-bold" : "border-emerald-700 text-emerald-300"}`
+    },
+    n
+  )))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "\u6709\u5229\u811A\u8CEA" }, /* @__PURE__ */ React.createElement(
+    "select",
+    {
+      value: dayTrend.favoredStyle,
+      onChange: (e) => updateDayTrend("favoredStyle", e.target.value),
+      className: "bg-emerald-950 border border-emerald-800 px-1.5 py-1 w-full text-stone-200"
+    },
+    /* @__PURE__ */ React.createElement("option", { value: "" }, "\u6307\u5B9A\u306A\u3057"),
+    STYLES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.key, value: s.key }, s.label))
+  )), /* @__PURE__ */ React.createElement(Field, { label: "\u597D\u8ABF\u9A0E\u624B" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: dayTrend.favoredJockey,
+      onChange: (e) => updateDayTrend("favoredJockey", e.target.value),
+      placeholder: "\u4F8B: \u6A2A\u5C71\u548C\u751F",
+      className: "bg-emerald-950 border border-emerald-800 px-1.5 py-1 w-full text-stone-200"
+    }
+  )), /* @__PURE__ */ React.createElement(Field, { label: "\u597D\u8ABF\u8840\u7D71(\u7236)" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: dayTrend.favoredSire,
+      onChange: (e) => updateDayTrend("favoredSire", e.target.value),
+      placeholder: "\u4F8B: \u30EB\u30FC\u30E9\u30FC\u30B7\u30C3\u30D7",
+      className: "bg-emerald-950 border border-emerald-800 px-1.5 py-1 w-full text-stone-200"
+    }
+  )), /* @__PURE__ */ React.createElement(Field, { label: "\u597D\u8ABF\u8840\u7D71(\u6BCD\u7236)" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: dayTrend.favoredDamSire,
+      onChange: (e) => updateDayTrend("favoredDamSire", e.target.value),
+      placeholder: "\u4F8B: \u30B9\u30DA\u30B7\u30E3\u30EB\u30A6\u30A3\u30FC\u30AF",
+      className: "bg-emerald-950 border border-emerald-800 px-1.5 py-1 w-full text-stone-200"
+    }
+  ))), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-stone-200" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "checkbox",
+      checked: dayTrend.upsetProne,
+      onChange: (e) => updateDayTrend("upsetProne", e.target.checked),
+      className: "accent-sky-500"
+    }
+  ), "\u672C\u65E5\u306F\u300C\u914D\u5F53\u50BE\u5411:\u6CE2\u4E71\u300D\uFF08\u5805\u3044\u6C7A\u7740\u306B\u306A\u308A\u306B\u304F\u3044\uFF09"), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-emerald-600" }, "netkeiba\u306E\u300C\u30EC\u30FC\u30B9\u50BE\u5411\u300D\u30DA\u30FC\u30B8\u306A\u3069\u3067\u8868\u793A\u3055\u308C\u308B\u3001\u305D\u306E\u65E5\u30FB\u305D\u306E\u7AF6\u99AC\u5834\u3060\u3051\u306E\u597D\u8ABF\u67A0\u756A\u30FB\u811A\u8CEA\u30FB\u9A0E\u624B\u30FB\u8840\u7D71\u3092\u3053\u3053\u306B\u5165\u529B\u3059\u308B\u3068\u3001\u8A55\u4FA1\u306B\u4E00\u6642\u7684\u306A\u30DC\u30FC\u30CA\u30B9\u3068\u3057\u3066\u52A0\u7B97\u3055\u308C\u307E\u3059\uFF08\u7236\u306F\u6700\u5927+0.2\u3001\u4ED6\u306F\u6700\u5927+0.3\u3001\u6BCD\u7236\u306F+0.2\uFF09\u3002\u6052\u4E45\u7684\u306A\u30B3\u30FC\u30B9\u7279\u5FB4\u3068\u306F\u5225\u67A0\u306E\u4E00\u6642\u7684\u306A\u88DC\u6B63\u3067\u3059\u3002\u300C\u99AC\u540D\u300D\u306E\u8A72\u5F53\u6B04\uFF08\u25BC\u8A73\u7D30\u5185\u306E\u300C\u6BCD\u7236\u300D\uFF09\u3082\u5FD8\u308C\u305A\u306B\u5165\u529B\u3057\u3066\u304F\u3060\u3055\u3044\u3002"))), predictedOrder.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "border-2 border-amber-500" }, /* @__PURE__ */ React.createElement("div", { className: "px-4 py-2 bg-emerald-900 text-amber-400 text-xs uppercase tracking-wider font-bold flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", null, "\u4E88\u60F3\u7740\u9806\u30B7\u30DF\u30E5\u30EC\u30FC\u30B7\u30E7\u30F3"), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowSimulator(true), className: "normal-case text-[11px] bg-amber-500 text-emerald-950 font-bold px-2 py-1 hover:bg-amber-400 whitespace-nowrap" }, "\u{1F3C7} \u30EC\u30FC\u30B9\u3092\u898B\u308B")), /* @__PURE__ */ React.createElement("div", { className: "divide-y divide-emerald-800/60" }, predictedOrder.map((h, i) => {
+    const maxScore = predictedOrder[0]._finalScore;
+    const minScore = predictedOrder[predictedOrder.length - 1]._finalScore;
+    const range = maxScore - minScore || 1;
+    const barPct = (h._finalScore - minScore) / range * 100;
+    const mark = RANK_MARK[i] || "";
+    const rankColor = i === 0 ? "text-amber-400" : i === 1 ? "text-stone-200" : i === 2 ? "text-orange-400" : "text-stone-500";
+    return /* @__PURE__ */ React.createElement("div", { key: h.id, className: "flex items-center gap-3 px-4 py-2" }, /* @__PURE__ */ React.createElement("span", { className: `display-font text-2xl font-bold w-8 text-center ${rankColor}` }, h.rank), /* @__PURE__ */ React.createElement("span", { className: "text-lg w-6 text-center text-amber-300" }, mark), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-baseline gap-2 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "truncate font-medium text-stone-100" }, h.num, "\u756A ", h.name), /* @__PURE__ */ React.createElement("span", { className: "tote-mono text-amber-300 text-xs whitespace-nowrap" }, toNum(h.odds) > 0 ? `${toNum(h.odds).toFixed(1)}\u500D` : "\u30AA\u30C3\u30BA\u672A\u5165\u529B")), /* @__PURE__ */ React.createElement("div", { className: "h-1.5 bg-emerald-950 mt-1 overflow-hidden rounded-sm" }, /* @__PURE__ */ React.createElement("div", { className: "h-full bg-amber-500", style: { width: `${Math.max(4, barPct)}%` } })), /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-emerald-500 mt-0.5" }, "\u8907\u52DD\u570F\u5185\u76EE\u5B89: ", (h._top3Prob * 100).toFixed(0), "%")));
+  })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-emerald-600 px-4 py-2" }, "\u8840\u7D71\u30FB\u30AF\u30E9\u30B9\u30FB\u8FD1\u8D70\u30FB\u65A4\u91CF\u3092\u53CD\u6620\u3057\u305F\u8A55\u4FA1\u5024\u306B\u3001\u5C55\u958B(\u30DA\u30FC\u30B9\xD7\u30B3\u30FC\u30B9\xD7\u67A0\u9806)\u306E\u52B9\u679C\u3092\u52A0\u5473\u3057\u305F\u72EC\u81EA\u30B9\u30B3\u30A2\u306E\u9806\u4F4D\u3067\u3059\u3002\u5B9F\u969B\u306E\u7740\u9806\u3092\u4FDD\u8A3C\u3059\u308B\u3082\u306E\u3067\u306F\u3042\u308A\u307E\u305B\u3093\u3002")), betRecommendation && /* @__PURE__ */ React.createElement("div", { className: `border-2 ${betRecommendation.tone}` }, /* @__PURE__ */ React.createElement("div", { className: "px-4 py-2 bg-emerald-900 text-amber-400 text-xs uppercase tracking-wider font-bold" }, "\u8CB7\u3044\u65B9\u306E\u304A\u3059\u3059\u3081\uFF08\u5805\u5B9F\uFF0B\u5999\u5473\u306E\u30D0\u30E9\u30F3\u30B9\u578B\uFF09"), /* @__PURE__ */ React.createElement("div", { className: "p-4 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: `text-sm font-bold ${betRecommendation.tone.split(" ")[0]}` }, betRecommendation.label), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-emerald-300" }, betRecommendation.axisEvNote), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, betRecommendation.picks.map((p, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "flex gap-2 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "text-amber-400 font-bold whitespace-nowrap" }, p.type, ":"), /* @__PURE__ */ React.createElement("span", { className: "text-stone-200" }, p.detail)))), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-emerald-600 pt-1 border-t border-emerald-800" }, `\u26A0 \u3053\u308C\u306F\u4E88\u60F3\u7740\u9806\u30B9\u30B3\u30A2\u306E\u5DEE\u5206\u304B\u3089\u6A5F\u68B0\u7684\u306B\u5C0E\u3044\u305F\u5238\u7A2E\u306E\u63D0\u6848\u3067\u3042\u308A\u3001\u56DE\u53CE\u7387\u3084\u7684\u4E2D\u3092\u4FDD\u8A3C\u3059\u308B\u3082\u306E\u3067\u306F\u3042\u308A\u307E\u305B\u3093\u3002EV\u306F\u81EA\u4F5C\u8A55\u4FA1${(MARKET_BLEND * 100).toFixed(0)}%\uFF0B\u5E02\u5834\u30AA\u30C3\u30BA\u542B\u307F${((1 - MARKET_BLEND) * 100).toFixed(0)}%\u3067\u30D6\u30EC\u30F3\u30C9\u3057\u305F\u63A8\u5B9A\u52DD\u7387\u3092\u4F7F\u3044\u3001EV${EV_THRESHOLD.toFixed(2)}\u3092\u8D85\u3048\u305F\u5834\u5408\u306E\u307F\u5999\u5473\u3042\u308A\u3068\u5224\u5B9A\u3057\u3066\u3044\u307E\u3059\uFF08\u4EE5\u524D\u306FEV1.0\u3067\u5224\u5B9A\u3057\u3066\u3044\u307E\u3057\u305F\uFF09\u3002\u8CC7\u91D1\u914D\u5206\u306F\u81EA\u5DF1\u8CAC\u4EFB\u3067\u3054\u5224\u65AD\u304F\u3060\u3055\u3044\u3002`))), bestBet && /* @__PURE__ */ React.createElement("div", { className: "px-4 py-3 border border-amber-600 bg-amber-500/10 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "text-amber-400 font-bold" }, "\u672C\u547D\u5019\u88DC\uFF08\u671F\u5F85\u5024\u30D9\u30FC\u30B9\uFF09\uFF1A"), bestBet.name, "\uFF08EV ", bestBet.ev.toFixed(2), "\u3001\u30E2\u30C7\u30EB\u52DD\u7387 ", (bestBet.modelProb * 100).toFixed(1), "%\uFF09"), /* @__PURE__ */ React.createElement("div", { className: "border-2 border-sky-600" }, /* @__PURE__ */ React.createElement("div", { className: "px-4 py-2 bg-emerald-900 text-sky-400 text-xs uppercase tracking-wider font-bold" }, "\u7D50\u679C\u8A18\u9332\u30FB\u691C\u8A3C\u30ED\u30B0\uFF08\u7D99\u7D9A\u7684\u306A\u7B54\u3048\u5408\u308F\u305B\uFF09"), /* @__PURE__ */ React.createElement("div", { className: "p-4 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "border border-emerald-700 p-3 space-y-1" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold text-amber-400" }, "\u{1F9E0} AI\u81EA\u5DF1\u8ABF\u6574\uFF08\u5B9F\u9A13\u7684\uFF09"), learnedWeightsInfo.active ? /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-emerald-300 space-y-1" }, /* @__PURE__ */ React.createElement("p", null, "\u30B5\u30F3\u30D7\u30EB", learnedWeightsInfo.sampleCount, "\u4EF6\u3092\u3082\u3068\u306B\u5404\u8981\u7D20\u306E\u91CD\u307F\u3092\u81EA\u52D5\u8ABF\u6574\u4E2D\u3067\u3059\u3002"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-x-3 gap-y-0.5 tote-mono" }, LEARN_COMPONENT_KEYS.map(({ key, label }) => /* @__PURE__ */ React.createElement("span", { key, className: learnedWeightsInfo.weights[key] > 1.02 ? "text-amber-400" : learnedWeightsInfo.weights[key] < 0.98 ? "text-stone-500" : "text-emerald-500" }, label, " ", learnedWeightsInfo.weights[key].toFixed(2), "x")))) : /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-emerald-500" }, "\u30B5\u30F3\u30D7\u30EB", learnedWeightsInfo.sampleCount, "/", MIN_LEARN_SAMPLES, "\u4EF6\uFF08\u3042\u3068", Math.max(0, MIN_LEARN_SAMPLES - learnedWeightsInfo.sampleCount), "\u4EF6\u3067\u81EA\u52D5\u8ABF\u6574\u304C\u6709\u52B9\u5316\u3057\u307E\u3059\u3002\u305D\u308C\u307E\u3067\u306F\u5168\u8981\u7D201.00x\u306E\u307E\u307E\u3067\u3059\uFF09")), logStats.total > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex gap-4 text-xs tote-mono" }, /* @__PURE__ */ React.createElement("span", { className: "text-emerald-300" }, "\u5358\u52DD\u7684\u4E2D: ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-400" }, logStats.tansho, "/", logStats.total), "\uFF08", (logStats.tansho / logStats.total * 100).toFixed(0), "%\uFF09"), /* @__PURE__ */ React.createElement("span", { className: "text-emerald-300" }, "\u8907\u52DD\u7684\u4E2D: ", /* @__PURE__ */ React.createElement("span", { className: "text-amber-400" }, logStats.fukusho, "/", logStats.total), "\uFF08", (logStats.fukusho / logStats.total * 100).toFixed(0), "%\uFF09")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 items-center" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: actualResultInput,
+      onChange: (e) => setActualResultInput(e.target.value),
+      placeholder: "\u5B9F\u969B\u306E\u7740\u9806\u3092\u99AC\u540D\u3067\uFF08\u4F8B: \u30AA\u30EB\u30B0\u30B8\u30A7\u30B7\u30C0,\u30D5\u30A3\u30FC\u30EB\u30C9\u30CE\u30FC\u30C8,\u30AD\u30B7\u30C0\u30F3\u30C1\u30E7\u30A6\uFF09",
+      className: "flex-1 min-w-[220px] bg-emerald-950 border border-emerald-800 px-2 py-1.5 text-xs text-stone-200"
+    }
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: recordResult,
+      className: "text-xs px-3 py-1.5 bg-sky-500 text-emerald-950 font-bold hover:bg-sky-400"
+    },
+    "\u3053\u306E\u7D50\u679C\u3092\u8A18\u9332"
+  )), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-emerald-600" }, "\u73FE\u5728\u306E\u672C\u547D(\u4E88\u60F3\u7740\u98061\u4F4D)\u3068\u5B9F\u969B\u306E\u7740\u9806\u3092\u7167\u3089\u3057\u5408\u308F\u305B\u3066\u3001\u5358\u52DD\u30FB\u8907\u52DD\u306E\u7684\u4E2D\u3092\u81EA\u52D5\u8A18\u9332\u3057\u307E\u3059\u3002\u30EC\u30FC\u30B9\u304C\u7D42\u308F\u3063\u305F\u3089\u6BCE\u56DE\u8A18\u9332\u3057\u3066\u304A\u304F\u3068\u3001\u4E0A\u306E\u7684\u4E2D\u7387\u304C\u84C4\u7A4D\u3055\u308C\u3066\u3044\u304D\u307E\u3059\u3002"), resultsLog.length > 0 && /* @__PURE__ */ React.createElement("ul", { className: "text-xs divide-y divide-emerald-800/60 max-h-64 overflow-y-auto" }, resultsLog.map((e) => /* @__PURE__ */ React.createElement("li", { key: e.id, className: "flex items-center justify-between py-1.5 gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-stone-200 truncate" }, e.raceName, "\uFF08", e.course, "\uFF09\u2014 \u672C\u547D: ", e.axisName), /* @__PURE__ */ React.createElement("div", { className: "text-emerald-500 truncate" }, "\u5B9F\u969B: ", e.actual, /* @__PURE__ */ React.createElement("span", { className: e.hitTansho ? "text-amber-400" : "text-stone-600" }, "\u5358\u52DD", e.hitTansho ? "\u25CB" : "\xD7"), " ", /* @__PURE__ */ React.createElement("span", { className: e.hitFukusho ? "text-amber-400" : "text-stone-600" }, "\u8907\u52DD", e.hitFukusho ? "\u25CB" : "\xD7"))), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => deleteLogEntry(e.id),
+      className: "text-emerald-600 hover:text-red-400 shrink-0"
+    },
+    "\u524A\u9664"
+  )))), resultsLog.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-emerald-500" }, "\u307E\u3060\u8A18\u9332\u304C\u3042\u308A\u307E\u305B\u3093\u3002"))), /* @__PURE__ */ React.createElement("div", { className: "border border-emerald-800 p-4 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs uppercase tracking-wider text-amber-400 font-bold" }, "\u30EC\u30FC\u30B9\u306E\u4FDD\u5B58\u30FB\u8AAD\u8FBC\uFF08\u30A2\u30D7\u30EA\u5185\uFF09"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: saveRace, className: "text-xs px-3 py-1.5 bg-amber-500 text-emerald-950 font-bold hover:bg-amber-400" }, "\u73FE\u5728\u306E\u5165\u529B\u3092\u4FDD\u5B58"), /* @__PURE__ */ React.createElement("button", { onClick: refreshSavedList, className: "text-xs px-3 py-1.5 border border-emerald-700 text-emerald-300 hover:border-amber-400 hover:text-amber-400" }, "\u4E00\u89A7\u3092\u66F4\u65B0")), status && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-emerald-400" }, status), savedRaces.length > 0 ? /* @__PURE__ */ React.createElement("ul", { className: "text-sm divide-y divide-emerald-800/60" }, savedRaces.map(({ slug, label }) => /* @__PURE__ */ React.createElement("li", { key: slug, className: "flex items-center justify-between py-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-stone-200" }, label), /* @__PURE__ */ React.createElement("span", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => loadRace(slug, label), className: "text-xs text-emerald-300 hover:text-amber-400 underline" }, "\u8AAD\u8FBC"), /* @__PURE__ */ React.createElement("button", { onClick: () => deleteRace(slug, label), className: "text-xs text-emerald-600 hover:text-red-400 underline" }, "\u524A\u9664"))))) : /* @__PURE__ */ React.createElement("div", { className: "text-xs text-emerald-500" }, "\u4FDD\u5B58\u6E08\u307F\u306E\u30EC\u30FC\u30B9\u306F\u307E\u3060\u3042\u308A\u307E\u305B\u3093\u3002"), /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-emerald-800" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs uppercase tracking-wider text-amber-400 font-bold mb-2" }, "\u30D5\u30A1\u30A4\u30EB\u306B\u4FDD\u5B58\u30FB\u8AAD\u8FBC\uFF08\u74B0\u5883\u306B\u5DE6\u53F3\u3055\u308C\u306A\u3044\u78BA\u5B9F\u306A\u65B9\u6CD5\uFF09"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: exportToFile, className: "text-xs px-3 py-1.5 border border-amber-600 text-amber-400 hover:bg-amber-500 hover:text-emerald-950" }, "\u30D5\u30A1\u30A4\u30EB\u306B\u4FDD\u5B58(JSON)"), /* @__PURE__ */ React.createElement("button", { onClick: () => importFileInputRef.current && importFileInputRef.current.click(), className: "text-xs px-3 py-1.5 border border-emerald-700 text-emerald-300 hover:border-amber-400 hover:text-amber-400" }, "\u30D5\u30A1\u30A4\u30EB\u304B\u3089\u8AAD\u8FBC"), /* @__PURE__ */ React.createElement("input", { ref: importFileInputRef, type: "file", accept: ".json,application/json", onChange: handleImportFile, className: "hidden" })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-emerald-600 pt-1" }, "\u300C\u30A2\u30D7\u30EA\u5185\u4FDD\u5B58\u300D\u304C\u3046\u307E\u304F\u52D5\u304B\u306A\u3044\u5834\u5408\u306F\u3053\u3061\u3089\u3092\u304A\u4F7F\u3044\u304F\u3060\u3055\u3044\u3002\u7AEF\u672B\u306BJSON\u30D5\u30A1\u30A4\u30EB\u3068\u3057\u3066\u30C0\u30A6\u30F3\u30ED\u30FC\u30C9\u3055\u308C\u3001\u5F8C\u3067\u8AAD\u307F\u8FBC\u3093\u3067\u5FA9\u5143\u3067\u304D\u307E\u3059\u3002")), /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-emerald-800" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs uppercase tracking-wider text-amber-400 font-bold mb-2" }, "\u30C6\u30AD\u30B9\u30C8\u3092\u30B3\u30D4\u30FC&\u30DA\u30FC\u30B9\u30C8\u3067\u4FDD\u5B58\u30FB\u8AAD\u8FBC\uFF08\u6700\u7D42\u624B\u6BB5\uFF09"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setShowExportText((s) => !s),
+      className: "text-xs px-3 py-1.5 border border-amber-600 text-amber-400 hover:bg-amber-500 hover:text-emerald-950"
+    },
+    showExportText ? "\u30C6\u30AD\u30B9\u30C8\u8868\u793A\u3092\u9589\u3058\u308B" : "\u4FDD\u5B58\u7528\u30C6\u30AD\u30B9\u30C8\u3092\u8868\u793A"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setShowImportText((s) => !s),
+      className: "text-xs px-3 py-1.5 border border-emerald-700 text-emerald-300 hover:border-amber-400 hover:text-amber-400"
+    },
+    showImportText ? "\u8AAD\u8FBC\u6B04\u3092\u9589\u3058\u308B" : "\u30C6\u30AD\u30B9\u30C8\u304B\u3089\u8AAD\u8FBC"
+  )), showExportText && /* @__PURE__ */ React.createElement("div", { className: "mt-2 space-y-2" }, /* @__PURE__ */ React.createElement(
+    "textarea",
+    {
+      ref: exportTextareaRef,
+      readOnly: true,
+      value: exportTextValue,
+      onFocus: (e) => e.target.select(),
+      className: "w-full h-32 bg-emerald-950 border border-emerald-800 text-stone-200 text-[10px] tote-mono p-2"
+    }
+  ), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: copyExportText,
+      className: "text-xs px-3 py-1.5 bg-amber-500 text-emerald-950 font-bold hover:bg-amber-400"
+    },
+    "\u30B3\u30D4\u30FC"
+  ), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-emerald-600 self-center" }, "\u81EA\u52D5\u30B3\u30D4\u30FC\u304C\u52B9\u304B\u306A\u3044\u5834\u5408\u306F\u3001\u30C6\u30AD\u30B9\u30C8\u6B04\u3092\u9577\u62BC\u3057\u3057\u3066\u624B\u52D5\u3067\u30B3\u30D4\u30FC\u3057\u3066\u304F\u3060\u3055\u3044\u3002"))), showImportText && /* @__PURE__ */ React.createElement("div", { className: "mt-2 space-y-2" }, /* @__PURE__ */ React.createElement(
+    "textarea",
+    {
+      value: importTextValue,
+      onChange: (e) => setImportTextValue(e.target.value),
+      placeholder: "\u3053\u3053\u306B\u4FDD\u5B58\u3057\u3066\u304A\u3044\u305FJSON\u30C6\u30AD\u30B9\u30C8\u3092\u8CBC\u308A\u4ED8\u3051\u3066\u304F\u3060\u3055\u3044",
+      className: "w-full h-32 bg-emerald-950 border border-emerald-800 text-stone-200 text-[10px] tote-mono p-2"
+    }
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: importFromText,
+      className: "text-xs px-3 py-1.5 bg-amber-500 text-emerald-950 font-bold hover:bg-amber-400"
+    },
+    "\u3053\u306E\u30C6\u30AD\u30B9\u30C8\u304B\u3089\u8AAD\u307F\u8FBC\u3080"
+  )), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-emerald-600 pt-1" }, "\u30E1\u30E2\u30A2\u30D7\u30EA\u306A\u3069\u306B\u3053\u306E\u30C6\u30AD\u30B9\u30C8\u3092\u8CBC\u308A\u4ED8\u3051\u3066\u4FDD\u7BA1\u3057\u3066\u304A\u3051\u3070\u3001\u3044\u3064\u3067\u3082\u8CBC\u308A\u623B\u3057\u3066\u5FA9\u5143\u3067\u304D\u307E\u3059\u3002\u30D6\u30E9\u30A6\u30B6\u306E\u6A5F\u80FD\u306B\u4E00\u5207\u4F9D\u5B58\u3057\u307E\u305B\u3093\u3002"))))), showSimulator && /* @__PURE__ */ React.createElement(RaceSimulatorView, { horses: predictedOrder, distance, paceScenario: pace.scenario, onClose: () => setShowSimulator(false), courseName: course, surfaceKey, straightStr: courseInfo.straight, hand: courseInfo.hand }));
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(KeibaSimple));
+</script>
+</body>
+</html>

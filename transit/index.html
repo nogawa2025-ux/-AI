@@ -273,6 +273,41 @@ input[type=range] { width: 100%; accent-color: var(--led); }
 .ach div { padding: 6px 8px; border: 1px dashed var(--rule); border-radius: 6px; font-size: 12px; color: var(--muted); }
 .ach div.got { border-style: solid; border-color: var(--led); color: var(--fg); }
 #finChart { width: 100%; height: 130px; display: block; }
+.cityRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--board);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+}
+.cityRow .nm { font-weight: 500; }
+.cityRow .sub { color: var(--muted); font-size: 11px; }
+.cityRow .st { font-size: 11px; color: var(--muted); min-width: 2.5em; text-align: right; }
+.cityRow .st.on { color: var(--led); }
+.list { display: grid; gap: 6px; }
+.kana { color: var(--muted); font-size: 11px; font-weight: 400; letter-spacing: 0.08em; }
+.chip { display: inline-block; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--rule); font-size: 11px; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.desc { margin: 0; font-size: 13px; line-height: 1.7; }
+.spark { width: 100%; height: 48px; display: block; }
+.goal { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--board); }
+.goal.done { border-color: var(--good); }
+.goal .top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.goal.done .bar > i { background: var(--good); }
+.scList { display: grid; gap: 8px; }
+.sc { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--board); }
+.sc .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.sc .lv { font-family: var(--font-led); color: var(--muted); font-size: 12px; letter-spacing: 0.1em; }
+.stars { color: var(--led); font-size: 13px; letter-spacing: 0.1em; }
+.sc .foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 
 #overlay {
   position: fixed;
@@ -308,6 +343,7 @@ input[type=range] { width: 100%; accent-color: var(--led); }
     <div class="meter"><span class="lbl">資金</span><span class="val" id="hMoney">—</span></div>
     <div class="meter"><span class="lbl">日時</span><span class="val" id="hDate">—</span></div>
     <div class="meter"><span class="lbl">評判</span><span class="val" id="hRep">—</span></div>
+    <div class="meter" id="mLeft" hidden><span class="lbl">期限まで</span><span class="val" id="hLeft">—</span></div>
     <div class="speed" id="speedBtns">
       <button data-speed="0" aria-label="一時停止">II</button>
       <button data-speed="1" aria-label="等速">1×</button>
@@ -329,7 +365,8 @@ input[type=range] { width: 100%; accent-color: var(--led); }
     <nav id="tabs">
       <button data-tab="lines">路線</button>
       <button data-tab="build">建設</button>
-      <button data-tab="station">駅</button>
+      <button data-tab="station">都市</button>
+      <button data-tab="goal">目標</button>
       <button data-tab="finance">財務</button>
       <button data-tab="log">記録</button>
     </nav>
@@ -345,37 +382,74 @@ const W = 1000, H = 700;
 const HOUR_SEC = 0.25;          // 等速時、ゲーム内1時間 = 0.25秒
 const K_DEMAND = 3;
 const BASE_DATE = Date.UTC(2026, 3, 1);
-const SAVE_KEY = 'minato-transit-v1';
+const SAVE_KEY = 'minato-transit-v2';
+const CLEAR_KEY = 'minato-transit-clears';
 
 const TYPES = {
   bus:  { key: 'bus',  name: 'バス',   code: 'B', speed: 35,  cap: 40,  unit: 4e4,   st: 2e6, veh: 1.5e7, vehUp: 1.2e6, trackUp: 1500,  fare: 5,  w: 3, unitName: '台' },
   rail: { key: 'rail', name: '鉄道',   code: 'R', speed: 60,  cap: 300, unit: 5e5,   st: 2e7, veh: 8e7,   vehUp: 5e6,   trackUp: 15000, fare: 5,  w: 5, unitName: '編成' },
   hsr:  { key: 'hsr',  name: '新幹線', code: 'S', speed: 160, cap: 800, unit: 2.5e6, st: 8e7, veh: 3e8,   vehUp: 1.8e7, trackUp: 60000, fare: 10, w: 6, unitName: '編成' },
 };
-const HSR_MIN_POP = 150;
+// 新幹線の駅を置ける街の規模（人口＋就業者、千人）
+const HSR_MIN_SIZE = 250;
 
+// 街のデータ。pop＝人口、jobs＝市内で働く人の数、tour＝観光の人気（いずれも千人規模の指数）、growth＝自然な人口増減率（月）
 const CITY_DEFS = [
-  ['みなと中央', 500, 360, 900, 'center'],
-  ['港ヶ浜',     820, 500, 420, 'port'],
-  ['北山',       470,  80, 140, ''],
-  ['西原',       150, 340, 260, ''],
-  ['東野',       760, 260, 320, ''],
-  ['南台',       480, 610, 210, ''],
-  ['桜町',       300, 190, 190, ''],
-  ['川口',       320, 480, 230, ''],
-  ['緑ヶ丘',     640, 120, 120, ''],
-  ['みなと空港', 930, 170,  80, 'airport'],
-  ['湖畔',       230, 600,  70, ''],
-  ['学園都市',   660, 400, 170, 'univ'],
-  ['新町',       370, 330, 240, ''],
-  ['湯ノ谷温泉',  90, 150,  50, 'onsen'],
-  ['臨海工業',   760, 610, 150, 'industry'],
+  { name: 'みなと中央', kana: 'みなとちゅうおう', kind: '中核市', x: 500, y: 360, pop: 900, jobs: 900, tour: 30, growth: 0.001, tag: 'center',
+    desc: '県庁と大企業の本社が集まる地域の中心。平日の昼は周りの街から通勤客が押し寄せる。', spots: ['県庁', 'みなと中央商店街', '中央公園'] },
+  { name: '港ヶ浜', kana: 'みなとがはま', kind: '市', x: 820, y: 500, pop: 420, jobs: 260, tour: 25, growth: 0.0005, tag: 'port',
+    desc: '江戸時代から続く港町。朝の魚市場と、離島へ向かうフェリーが名物。', spots: ['魚市場', 'フェリーターミナル', '赤れんが倉庫'] },
+  { name: '北山', kana: 'きたやま', kind: '町', x: 470, y: 80, pop: 140, jobs: 50, tour: 10, growth: -0.001, tag: '',
+    desc: '山あいの住宅地。冬は雪が多く、車での通勤がつらい。', spots: ['北山ダム', 'スキー場'] },
+  { name: '西原', kana: 'にしはら', kind: '市', x: 150, y: 340, pop: 260, jobs: 120, tour: 5, growth: 0, tag: '',
+    desc: '畑と物流倉庫が広がる町。国道沿いに大型店が並ぶ。', spots: ['西原物流センター', '道の駅にしはら'] },
+  { name: '東野', kana: 'ひがしの', kind: '市', x: 760, y: 260, pop: 320, jobs: 110, tour: 5, growth: 0.002, tag: '',
+    desc: '大規模団地が連なるベッドタウン。朝は都心へ向かう人であふれる。', spots: ['東野団地', '東野中央病院'] },
+  { name: '南台', kana: 'みなみだい', kind: '市', x: 480, y: 610, pop: 210, jobs: 90, tour: 6, growth: 0.001, tag: '',
+    desc: '高台の閑静な住宅街。海が見える坂道が多い。', spots: ['南台展望公園'] },
+  { name: '桜町', kana: 'さくらまち', kind: '町', x: 300, y: 190, pop: 190, jobs: 70, tour: 22, growth: 0, tag: '',
+    desc: '城跡を囲む城下町。春は千本桜を目当てに花見客が集まる。', spots: ['桜町城跡', '千本桜並木', '酒蔵通り'] },
+  { name: '川口', kana: 'かわぐち', kind: '市', x: 320, y: 480, pop: 230, jobs: 140, tour: 4, growth: 0, tag: '',
+    desc: '小さな町工場が集まる下町。職人の街として知られる。', spots: ['川口銀座商店街'] },
+  { name: '緑ヶ丘', kana: 'みどりがおか', kind: 'ニュータウン', x: 640, y: 120, pop: 120, jobs: 30, tour: 3, growth: 0.006, tag: '',
+    desc: '造成中のニュータウン。若い世帯が次々に引っ越してくる。', spots: ['緑ヶ丘ショッピングモール'] },
+  { name: 'みなと空港', kana: 'みなとくうこう', kind: '空港', x: 930, y: 170, pop: 8, jobs: 25, tour: 120, growth: 0, tag: 'airport',
+    desc: '国内線と国際線が発着する地域の玄関口。旅行者が一日中行き来する。', spots: ['旅客ターミナル', '展望デッキ'] },
+  { name: '湖畔', kana: 'こはん', kind: '村', x: 230, y: 600, pop: 30, jobs: 8, tour: 20, growth: -0.003, tag: '',
+    desc: '湖のほとりの小さな村。夏はキャンプとボート遊びの客が訪れる。', spots: ['湖畔キャンプ場', '貸しボート'] },
+  { name: '学園都市', kana: 'がくえんとし', kind: '市', x: 660, y: 400, pop: 170, jobs: 120, tour: 5, growth: 0.002, tag: 'univ',
+    desc: '国立大学と研究所が立地する学生の街。平日の朝は学生で混み合う。', spots: ['みなと大学', '科学博物館'] },
+  { name: '新町', kana: 'しんまち', kind: '市', x: 370, y: 330, pop: 240, jobs: 150, tour: 8, growth: 0.002, tag: '',
+    desc: '都心の西隣に広がる商業地。百貨店と映画館がある。', spots: ['新町百貨店', 'シネマ新町'] },
+  { name: '湯ノ谷温泉', kana: 'ゆのたにおんせん', kind: '町', x: 90, y: 150, pop: 50, jobs: 25, tour: 60, growth: -0.004, tag: 'onsen',
+    desc: '山奥の古い温泉街。客足が遠のき、若い人が街を出ていっている。', spots: ['湯けむり通り', '共同浴場「鶴の湯」'] },
+  { name: '臨海工業', kana: 'りんかいこうぎょう', kind: '工業地域', x: 760, y: 610, pop: 40, jobs: 220, tour: 2, growth: 0, tag: 'industry',
+    desc: '製鉄所と化学工場が並ぶ。住む人は少ないが、働く人は多い。', spots: ['みなと製鉄所', '火力発電所'] },
+  { name: '大橋', kana: 'おおはし', kind: '市', x: 600, y: 520, pop: 180, jobs: 70, tour: 6, growth: 0.001, tag: '',
+    desc: '川に架かる大橋の両岸に広がる住宅地。橋の渋滞が悩みの種。', spots: ['みなと大橋', '河川敷グラウンド'] },
+  { name: '海浜公園', kana: 'かいひんこうえん', kind: '行楽地', x: 905, y: 330, pop: 10, jobs: 15, tour: 70, growth: 0, tag: 'resort',
+    desc: '砂浜と水族館がある行楽地。週末は家族連れで大混雑する。', spots: ['みなと水族館', '白砂ビーチ'] },
+  { name: '牧野', kana: 'まきの', kind: '村', x: 60, y: 460, pop: 25, jobs: 10, tour: 8, growth: -0.004, tag: '',
+    desc: '酪農の村。牧場のソフトクリームが名物。', spots: ['まきの牧場'] },
+  { name: 'ひばり台', kana: 'ひばりだい', kind: 'ニュータウン', x: 310, y: 640, pop: 110, jobs: 20, tour: 2, growth: 0.005, tag: '',
+    desc: '丘陵を切り開いて生まれた新しい住宅地。駅がなく、バスを待つ列が長い。', spots: ['ひばり台中央公園'] },
+  { name: 'テクノパーク', kana: 'てくのぱーく', kind: '業務地区', x: 820, y: 90, pop: 15, jobs: 140, tour: 1, growth: 0.003, tag: 'office',
+    desc: 'IT企業の研究所が集まる業務団地。平日の朝夕だけ人が動く。', spots: ['みなとテクノタワー'] },
 ];
-const TAG_LABEL = { center: '都心', port: '港町', airport: '空港（旅客需要大）', onsen: '温泉地（週末に混雑）', univ: '学生街（平日に混雑）', industry: '工業地帯（平日の朝夕）' };
+const TAG_LABEL = {
+  center: '都心（平日は通勤客が集中）', port: '港町', airport: '空港（旅行者が一日中利用）', onsen: '温泉地（週末に観光客）',
+  univ: '学生街（平日に混雑、休日は閑散）', industry: '工業地帯（平日の朝夕に通勤）', office: '業務地区（平日のみ）', resort: '行楽地（週末に大混雑）',
+};
 const LINE_COLORS = ['#e8423f', '#2f8fe0', '#f5a524', '#3cb371', '#a066d3', '#e86fa8', '#14b8c4', '#c9a227', '#8bc34a', '#ff7f50', '#5c7cfa', '#d9480f'];
 // 時間帯ごとの需要（朝夕ラッシュ）。平均1に正規化
 const HOURF = (() => {
   const raw = [0.1, 0.05, 0.05, 0.05, 0.1, 0.3, 0.9, 2.0, 2.2, 1.3, 0.9, 0.9, 1.0, 0.9, 0.9, 1.0, 1.3, 1.9, 2.0, 1.4, 1.0, 0.7, 0.4, 0.2];
+  const m = raw.reduce((a, b) => a + b, 0) / 24;
+  return raw.map(v => v / m);
+})();
+// 観光客の動き（昼間に多い）。平均1に正規化
+const TOURF = (() => {
+  const raw = [0.05, 0.02, 0.02, 0.02, 0.05, 0.2, 0.5, 0.9, 1.4, 1.8, 2.0, 1.8, 1.5, 1.6, 1.8, 1.9, 1.7, 1.4, 1.1, 0.8, 0.5, 0.3, 0.15, 0.08];
   const m = raw.reduce((a, b) => a + b, 0) / 24;
   return raw.map(v => v / m);
 })();
@@ -409,8 +483,8 @@ let dirtyPanel = true;
 
 function newGame() {
   return {
-    v: 1, money: 5e8, loan: 0, t: 7, rep: 50,
-    cities: CITY_DEFS.map(([name, x, y, pop, tag]) => ({ name, x, y, pop, tag })),
+    v: 2, money: 5e8, loan: 0, t: 7, rep: 50, scenario: null, goalDone: [], endMonth: 0, result: null,
+    cities: CITY_DEFS.map(c => ({ ...c, spots: c.spots.slice(), hist: [c.pop], users: 0, usersPrev: 0, arr: 0, arrPrev: 0 })),
     lines: [], trains: [],
     waiting: CITY_DEFS.map(() => ({})),
     built: { seg: {}, st: {} },
@@ -531,36 +605,42 @@ function rebuild() {
 }
 
 // ===== シミュレーション =====
-function tagF(c, weekend, hour) {
+// 通勤・通学の曜日と時間帯による増減
+function commuteF(c, weekend, hour) {
   switch (c.tag) {
-    case 'airport': return 1.8;
-    case 'onsen': return weekend ? 2.2 : 0.7;
-    case 'univ': return weekend ? 0.6 : 1.3;
-    case 'industry': return weekend ? 0.4 : ((hour >= 6 && hour <= 9) || (hour >= 17 && hour <= 20) ? 1.6 : 1);
-    default: return weekend ? 0.85 : 1;
+    case 'univ': return weekend ? 0.35 : 1.3;
+    case 'industry': return weekend ? 0.3 : ((hour >= 6 && hour <= 9) || (hour >= 17 && hour <= 20) ? 1.5 : 1);
+    case 'office': return weekend ? 0.2 : 1.3;
+    default: return weekend ? 0.55 : 1;
   }
 }
-function waitCap(c) { return Math.round(200 + S.cities[c].pop * 1.5); }
+// 駅のホームに入りきる人数
+function waitCap(c) { const x = S.cities[c]; return Math.round(200 + x.pop + x.jobs * 0.5 + x.tour * 2); }
 function waitTotal(c) { let n = 0; for (const k in S.waiting[c]) n += S.waiting[c][k]; return n; }
 
 function genDemand(dt) {
   const d = dateAt(S.t);
   const hour = d.getUTCHours();
   const weekend = d.getUTCDay() === 0 || d.getUTCDay() === 6;
-  const base = K_DEMAND * HOURF[hour] * (0.5 + S.rep / 100) * dt / 24;
+  const base = K_DEMAND * (0.5 + S.rep / 100) * dt / 24;
+  const tourF = TOURF[hour] * (weekend ? 1.8 : 0.7);
   const N = S.cities.length;
   for (let s = 0; s < N; s++) {
     const row = R[s];
     if (!row) continue;
     let any = false;
     const cs = S.cities[s];
-    const fs = tagF(cs, weekend, hour) * (effActive('fest', s) ? 2.5 : 1);
+    const cfs = commuteF(cs, weekend, hour);
+    const fs = effActive('fest', s) ? 2.5 : 1;
     for (let t = 0; t < N; t++) {
       const r = row[t];
       if (!r) continue;
       any = true;
       const ct = S.cities[t];
-      const D = base * cs.pop * ct.pop / 1000 / (1 + r.hours / 5) * Math.pow(r.fm, -1.3) * fs * tagF(ct, weekend, hour) * (effActive('fest', t) ? 2.5 : 1);
+      // 住む人→働く場所への通勤と、観光地へ向かう旅行客
+      const commute = (cs.pop * ct.jobs + cs.jobs * ct.pop) / 2000 * HOURF[hour] * cfs * commuteF(ct, weekend, hour);
+      const tour = (cs.pop * ct.tour + cs.tour * ct.pop) / 1000 * tourF;
+      const D = base * (commute + tour) / (1 + r.hours / 5) * Math.pow(r.fm, -1.3) * fs * (effActive('fest', t) ? 2.5 : 1);
       const i = s * N + t;
       ACC[i] += D;
       if (ACC[i] >= 1) {
@@ -600,7 +680,7 @@ function arrive(tr, L, i) {
     const n = tr.pax[key];
     delete tr.pax[key];
     tr.load -= n;
-    if (dest === c) { S.day.del += n; S.totalPax += n; S.month.pax += n; }
+    if (dest === c) { S.day.del += n; S.totalPax += n; S.month.pax += n; S.cities[c].arr += n; }
     else if (R[c] && R[c][dest]) S.waiting[c][dest] = (S.waiting[c][dest] || 0) + n;
   }
   // 折り返し
@@ -626,6 +706,7 @@ function arrive(tr, L, i) {
     boarded += n;
     income += Math.abs(L._cum[ai] - L._cum[i]) * T.fare * L.fareMult * n;
   }
+  S.cities[c].users += boarded;
   if (income > 0) {
     earn(income, L);
     if (income >= 1e4 && FX.length < 40) FX.push({ x: S.cities[c].x, y: S.cities[c].y, text: '+' + yen(income), life: 1 });
@@ -665,7 +746,27 @@ function onDay() {
   S.effects = S.effects.filter(e => e.until > S.t);
   if (day >= S.nextEventDay && S.lines.length) { randomEvent(); S.nextEventDay = day + Math.round(rnd(8, 20)); }
   checkAch();
+  checkGoals();
   dirtyPanel = true;
+}
+
+// 街の人口は毎月、自然増減＋鉄道サービスの良さ＋訪れた人の多さで変わる
+function growCities() {
+  const served = servedSet();
+  S.cities.forEach((c, i) => {
+    let rate = c.growth;
+    if (served.has(i)) {
+      rate += (S.rep - 45) / 6000;
+      // 観光地は訪れる人が多いほど店や宿が増えて人が住みつく
+      rate += c.tour >= 20 ? Math.min(0.03, c.arr / (c.pop * 1000) * 0.3) : Math.min(0.004, c.arr / (c.pop * 1000) * 0.05);
+    }
+    c.pop = Math.max(1, c.pop * (1 + rate));
+    c.jobs = Math.max(1, c.jobs * (1 + rate * 0.7));
+    c.hist.push(c.pop);
+    if (c.hist.length > 24) c.hist.shift();
+    c.usersPrev = c.users; c.users = 0;
+    c.arrPrev = c.arr; c.arr = 0;
+  });
 }
 
 function onMonth() {
@@ -679,11 +780,7 @@ function onMonth() {
   if (S.hist.length > 12) S.hist.shift();
   log(`${label}決算：収入 ${yen(S.month.rev)} / 支出 ${yen(S.month.cost)} → ${profit >= 0 ? '黒字' : '赤字'} ${yen(profit)}`);
   if (profit > 0 && S.lines.length) unlock('profit');
-  // 駅のある街は評判に応じて成長
-  const served = servedSet();
-  S.cities.forEach((c, i) => {
-    if (served.has(i)) c.pop = Math.round(c.pop * (1 + (S.rep - 45) / 3000));
-  });
+  growCities();
   S.lines.forEach(L => { L.revPrev = L.rev; L.rev = 0; });
   S.month = { rev: 0, cost: 0, pax: 0 };
   if (S.money < 0) {
@@ -691,6 +788,8 @@ function onMonth() {
     if (S.negMonths >= 3) { S.over = true; showGameOver(); }
     else log(`⚠ 資金がマイナスです（${S.negMonths}/3か月）。3か月続くと経営破綻します。財務タブで借入できます。`);
   } else S.negMonths = 0;
+  checkGoals();
+  if (S.scenario && !S.result && !S.over && monthOf(S.t) >= S.endMonth) finishScenario(false);
   save();
 }
 
@@ -717,8 +816,9 @@ const EVENTS = [
   { w: 2, run() {
     const c = pick([...servedSet()]);
     const city = S.cities[c];
-    city.pop = Math.round(city.pop * 1.12);
-    log(`${city.name}駅前で再開発が完成。人口が12%増えました。`);
+    city.pop *= 1.12;
+    city.jobs *= 1.08;
+    log(`${city.name}駅前で再開発が完成。人口が12%、働く場所が8%増えました。`);
   } },
 ];
 function randomEvent() {
@@ -755,6 +855,104 @@ function checkAch() {
   if (servedSet().size === S.cities.length) unlock('allCities');
 }
 
+// ===== シナリオ =====
+const cityName = i => CITY_DEFS[i].name;
+const man = n => (n / 1e4 >= 1 ? (n / 1e4).toLocaleString(undefined, { maximumFractionDigits: 1 }) + '万' : n.toLocaleString());
+// 目標は value（現在値）と target（目標値）を返す。一度達成すれば達成扱いのまま
+const G = {
+  lines: n => ({ label: `路線を${n}本以上運行する`, value: () => S.lines.length, target: n, fmt: v => v + '本' }),
+  pax: n => ({ label: `累計乗客 ${man(n)}人`, value: () => S.totalPax, target: n, fmt: v => man(Math.round(v)) + '人' }),
+  profit: () => ({ label: '月次決算で黒字を出す', value: () => (S.hist.some(h => h.rev > h.cost) ? 1 : 0), target: 1, fmt: v => (v ? '達成' : 'まだ') }),
+  connect: (a, b) => ({ label: `${cityName(a)}と${cityName(b)}を路線で結ぶ`, value: () => (R[a] && R[a][b] ? 1 : 0), target: 1, fmt: v => (v ? '開通' : '未開通') }),
+  users: (c, n) => ({ label: `${cityName(c)}駅の月間利用者 ${man(n)}人`, value: () => Math.max(S.cities[c].users, S.cities[c].usersPrev), target: n, fmt: v => man(Math.round(v)) + '人' }),
+  net: n => ({ label: `純資産 ${yen(n)}`, value: () => S.money - S.loan, target: n, fmt: v => yen(v) }),
+  noLoan: () => ({ label: '借入金を完済する', value: () => (S.loan <= 0 ? 1 : 0), target: 1, fmt: () => '残り ' + yen(S.loan) }),
+  rep: n => ({ label: `評判 ${n} 以上`, value: () => S.rep, target: n, fmt: v => Math.round(v) }),
+  cityPop: (c, n) => ({ label: `${cityName(c)}の人口を${man(n * 1000)}人に`, value: () => S.cities[c].pop, target: n, fmt: v => man(Math.round(v * 1000)) + '人' }),
+  hsrCities: n => ({ label: `新幹線で${n}都市を結ぶ`, value: () => new Set(S.lines.filter(l => l.type === 'hsr').flatMap(l => l.path)).size, target: n, fmt: v => v + '都市' }),
+  allCities: () => ({ label: '全20都市に駅を置く', value: () => servedSet().size, target: CITY_DEFS.length, fmt: v => v + '都市' }),
+};
+const SCENARIOS = [
+  { id: 'first', name: 'はじめての開業', level: 1, months: 12,
+    brief: '新しく設立された「みなと交通」。まずは都心と周りの街を結び、会社を軌道に乗せよう。',
+    setup() { S.money = 5e8; },
+    goals: () => [G.lines(3), G.pax(200000), G.profit()] },
+  { id: 'airport', name: '空港アクセス線', level: 2, months: 18,
+    brief: '空港から都心までの足がなく、旅行者が不便を訴えている。空港と街を結ぶ路線で需要をつかもう。',
+    setup() { S.money = 7e8; },
+    goals: () => [G.connect(9, 0), G.users(9, 12000), G.net(1.2e9)] },
+  { id: 'rebuild', name: '赤字バス会社の再建', level: 3, months: 24,
+    brief: '経営難のバス会社を引き継いだ。運賃は安すぎ、車両の配置もでたらめで、借金が4億円ある。立て直して完済しよう。',
+    setup() {
+      S.money = 3e7; S.loan = 4e8; S.rep = 35;
+      presetLine('bus', [3, 12, 0], 6, 0.6);
+      presetLine('bus', [6, 12, 7], 1, 0.6);
+      presetLine('bus', [2, 8], 4, 0.6);
+      presetLine('bus', [4, 11, 15], 1, 0.6);
+    },
+    goals: () => [G.noLoan(), G.rep(60), G.profit()] },
+  { id: 'onsen', name: '温泉郷を救え', level: 3, months: 24,
+    brief: '湯ノ谷温泉は人が減り続け、毎月2%ずつ人口が流出している。観光客を運んで温泉街に活気を取り戻そう。',
+    setup() { S.money = 6e8; S.cities[13].growth = -0.02; },
+    goals: () => [G.cityPop(13, 65), G.users(13, 8000), G.rep(65)] },
+  { id: 'shinkansen', name: '新幹線の時代', level: 4, months: 36,
+    brief: '巨額の資金を得て、地域を貫く新幹線の建設が始まる。在来線と組み合わせて大量輸送の時代を築こう。',
+    setup() { S.money = 3e9; presetLine('rail', [3, 12, 0, 11, 1], 4, 1); },
+    goals: () => [G.hsrCities(5), G.pax(6e6), G.net(1e10)] },
+  { id: 'all', name: 'すべての街に駅を', level: 5, months: 48,
+    brief: '山奥の村から工業地帯まで、地域のすべての街に駅を置く。赤字路線を黒字路線で支えながら、評判も保とう。',
+    setup() { S.money = 1e9; },
+    goals: () => [G.allCities(), G.rep(70), G.net(3e9)] },
+];
+const scenarioOf = id => SCENARIOS.find(x => x.id === id);
+function goalsOf() { const sc = S.scenario && scenarioOf(S.scenario); return sc ? sc.goals() : []; }
+function checkGoals() {
+  if (!S.scenario || S.result || S.over) return;
+  const gs = goalsOf();
+  gs.forEach((g, i) => {
+    if (!S.goalDone[i] && g.value() >= g.target) {
+      S.goalDone[i] = true;
+      log(`🎯 目標達成：${g.label}`);
+      toast(`目標達成：${g.label}`);
+    }
+  });
+  if (gs.length && gs.every((g, i) => S.goalDone[i])) finishScenario(true);
+}
+function monthsLeft() { return Math.max(0, S.endMonth - monthOf(S.t)); }
+function loadClears() { try { return JSON.parse(localStorage.getItem(CLEAR_KEY)) || {}; } catch (e) { return {}; } }
+function finishScenario(win) {
+  const sc = scenarioOf(S.scenario);
+  const used = sc.months - monthsLeft();
+  const stars = win ? (used <= sc.months * 0.5 ? 3 : used <= sc.months * 0.75 ? 2 : 1) : 0;
+  S.result = { win, stars, months: used };
+  if (win) {
+    const clears = loadClears();
+    clears[sc.id] = Math.max(clears[sc.id] || 0, stars);
+    try { localStorage.setItem(CLEAR_KEY, JSON.stringify(clears)); } catch (e) { /* 記録できない環境では何もしない */ }
+    log(`シナリオ「${sc.name}」をクリアしました（${'★'.repeat(stars)}）。`);
+  } else log(`シナリオ「${sc.name}」は期限切れで失敗しました。`);
+  save();
+  showResult();
+}
+// シナリオ開始時から走っている路線を、費用なしで敷く
+function presetLine(type, path, trains, fareMult) {
+  const T = TYPES[type];
+  path.forEach((c, i) => {
+    S.built.st[type + ':' + c] = 1;
+    if (i > 0) S.built.seg[type + ':' + segKey(path[i - 1], c)] = 1;
+  });
+  const n = S.lines.filter(l => l.type === type).length + 1;
+  const L = {
+    id: S.nextId++, type, path: path.slice(), color: LINE_COLORS[S.lines.length % LINE_COLORS.length], fareMult,
+    code: T.code + n, name: `${cityName(path[0])}〜${cityName(path[path.length - 1])}${type === 'bus' ? ' バス' : type === 'hsr' ? ' 新幹線' : '線'}`,
+    rev: 0, revPrev: 0,
+  };
+  S.lines.push(L);
+  lineGeom(L);
+  const roundTrip = (L._len / T.speed + path.length * 0.4) * 2;
+  for (let k = 0; k < trains; k++) S.trains.push({ id: S.nextId++, line: L.id, pos: 0, dir: 1, next: 0, dwell: roundTrip * k / trains, load: 0, pax: {} });
+}
+
 // ===== 建設 =====
 function draftCost(dr) {
   const T = TYPES[dr.type];
@@ -782,7 +980,7 @@ function startBuild(type, lineId) {
 function draftTap(c) {
   const city = S.cities[c];
   if (draft.path.includes(c)) { toast('同じ駅を2回通ることはできません'); return; }
-  if (draft.type === 'hsr' && city.pop < HSR_MIN_POP && city.tag !== 'airport') { toast(`新幹線の駅は人口${HSR_MIN_POP}千人以上の都市か空港にしか置けません`); return; }
+  if (draft.type === 'hsr' && city.pop + city.jobs < HSR_MIN_SIZE && city.tag !== 'airport') { toast('新幹線の駅は大きな街（人口と就業者の合計25万人以上）か空港にしか置けません'); return; }
   if (draft.prepend) draft.path.unshift(c); else draft.path.push(c);
   draft.added++;
   renderBuildBar();
@@ -1017,7 +1215,7 @@ function draw() {
   const font = (sz, w) => `${w || 500} ${sz * px}px ${getComputedStyle(document.body).fontFamily}`;
   S.cities.forEach((c, i) => {
     const isSt = served.has(i);
-    const r = (3 + Math.sqrt(c.pop) / 4.5) * px;
+    const r = (3 + Math.sqrt(c.pop + c.jobs * 0.5 + c.tour) / 4.5) * px;
     if (selCity === i) {
       ctx.strokeStyle = COL.led; ctx.lineWidth = 2 * px;
       ctx.beginPath(); ctx.arc(c.x, c.y, r + 7 * px, 0, 7); ctx.stroke();
@@ -1050,13 +1248,22 @@ function draw() {
     ctx.strokeText(c.name, c.x, c.y + r + 5 * px);
     ctx.fillStyle = isSt ? COL.fg : COL.muted;
     ctx.fillText(c.name, c.x, c.y + r + 5 * px);
+    let ty = c.y + r + 19 * px;
+    if (view.s > 0.75) {
+      const label = man(Math.round(c.pop * 1000)) + '人';
+      ctx.font = font(10);
+      ctx.fillStyle = COL.muted;
+      ctx.strokeText(label, c.x, ty);
+      ctx.fillText(label, c.x, ty);
+      ty += 13 * px;
+    }
     if (isSt && view.s > 0.55) {
       const wt = waitTotal(i);
       if (wt > 0) {
         ctx.font = font(10);
         ctx.fillStyle = wt / waitCap(i) > 0.8 ? COL.bad : COL.led;
-        ctx.strokeText('待' + wt, c.x, c.y + r + 19 * px);
-        ctx.fillText('待' + wt, c.x, c.y + r + 19 * px);
+        ctx.strokeText('待' + wt, c.x, ty);
+        ctx.fillText('待' + wt, c.x, ty);
       }
     }
   });
@@ -1173,7 +1380,7 @@ document.addEventListener('click', e => {
   if (!b || b.disabled) return;
   const act = b.dataset.act;
   const L = b.dataset.line ? lineById(+b.dataset.line) : null;
-  const needConfirm = { removeLine: 1, reset: 1 };
+  const needConfirm = { removeLine: 1 };
   if (needConfirm[act] && pendingConfirm !== act + (L ? L.id : '')) {
     pendingConfirm = act + (L ? L.id : '');
     renderPanel();
@@ -1198,9 +1405,17 @@ document.addEventListener('click', e => {
     case 'borrow': S.loan += 1e8; S.money += 1e8; log('銀行から1億円を借り入れました（月利0.4%）。'); break;
     case 'repay': if (S.money >= 1e8 && S.loan >= 1e8) { S.loan -= 1e8; S.money -= 1e8; log('借入金を1億円返済しました。'); } break;
     case 'save': save(); toast('保存しました'); break;
-    case 'reset': localStorage.removeItem(SAVE_KEY); start({}, true); return;
-    case 'help': showHelp(); return;
-    case 'closeOverlay': $('#overlay').hidden = true; return;
+    case 'help': showHelp($('#overlay').hidden ? 'game' : 'title'); return;
+    case 'closeOverlay':
+      if (overlayBack === 'title') showTitle();
+      else { $('#overlay').hidden = true; overlayBack = null; }
+      return;
+    case 'title': save(); showTitle(); return;
+    case 'continue': S = load() || newGame(); initGame(); $('#overlay').hidden = true; return;
+    case 'newFree': newRun(null); return;
+    case 'newScenario': newRun(b.dataset.id); return;
+    case 'selCity': selCity = +b.dataset.city; break;
+    case 'cityList': selCity = null; break;
     case 'cityLine': selLine = +b.dataset.line; tab = 'lines'; syncTabs(); return;
   }
   renderPanel();
@@ -1272,32 +1487,13 @@ function renderPanel() {
       h += `<div class="typeCard"><div class="top"><h3>${T.name}</h3><button class="btn primary" data-act="build" data-type="${T.key}">敷設する</button></div>
         <div class="spec">定員 ${T.cap}人・時速 ${T.speed}・運賃 ${T.fare}円/0.1km<br>
         線路 ${yen(T.unit * 10)}/km・駅 ${yen(T.st)}・車両 ${yen(T.veh)}<br>
-        維持費：車両 ${yen(T.vehUp)}/月・線路 ${yen(T.trackUp * 10)}/km月${T.key === 'hsr' ? `<br>人口${HSR_MIN_POP}千人以上の都市と空港のみ停車可` : ''}</div></div>`;
+        維持費：車両 ${yen(T.vehUp)}/月・線路 ${yen(T.trackUp * 10)}/km月${T.key === 'hsr' ? '<br>大きな街（人口＋就業者25万人以上）と空港のみ停車可' : ''}</div></div>`;
     });
     h += '</div>';
   } else if (tab === 'station') {
-    if (selCity === null) h = '<p class="hint">地図上の都市をタップすると、人口や待っている乗客の行き先が表示されます。</p>';
-    else {
-      const c = S.cities[selCity];
-      const lines = S.lines.filter(L => L.path.includes(selCity));
-      const w = S.waiting[selCity];
-      const dests = Object.keys(w).map(k => [+k, w[k]]).sort((a, b) => b[1] - a[1]).slice(0, 6);
-      const wt = waitTotal(selCity), cap = waitCap(selCity);
-      h = `<h3>${c.name}${lines.length ? '駅' : ''}</h3>
-        <dl class="kv"><dt>人口</dt><dd class="num">${c.pop.toLocaleString()}千人</dd>
-        ${c.tag ? `<dt>特徴</dt><dd>${TAG_LABEL[c.tag]}</dd>` : ''}
-        ${effActive('fest', selCity) ? '<dt>行事</dt><dd class="pos">祭りで需要2.5倍</dd>' : ''}
-        <dt>乗り入れ</dt><dd>${lines.length ? lines.map(L => `<button class="btn" data-act="cityLine" data-line="${L.id}"><span class="badge" style="--c:${L.color}">${L.code}</span></button>`).join(' ') : '駅がありません'}</dd>
-        ${lines.length ? `<dt>待ち客</dt><dd><span class="num ${wt / cap > 0.8 ? 'neg' : ''}">${wt}</span> / ${cap}人<div class="bar"><i style="width:${Math.min(100, wt / cap * 100)}%"></i></div></dd>` : ''}
-        </dl>`;
-      if (dests.length) {
-        h += '<div class="bars"><span class="hint">行き先の多い順</span>';
-        dests.forEach(([d, n]) => { h += `<div class="row" style="justify-content:space-between"><span>${S.cities[d].name}</span><span class="num">${n}人</span></div>`; });
-        h += '</div>';
-      }
-      if (!lines.length) h += '<p class="hint">「建設」タブから路線を敷くとこの都市に駅ができます。</p>';
-      else if (wt / cap > 0.8) h += '<p class="hint neg">ホームが混雑しています。あふれた乗客は帰ってしまい、評判が下がります。車両を増やしましょう。</p>';
-    }
+    h = selCity === null ? cityListHtml() : cityDetailHtml(selCity);
+  } else if (tab === 'goal') {
+    h = goalHtml();
   } else if (tab === 'finance') {
     const upkeep = dailyCost() * 30;
     h = `<dl class="kv">
@@ -1315,12 +1511,97 @@ function renderPanel() {
       <p class="hint">借入は最大20億円、月利0.4%。月末の資金がマイナスのまま3か月続くと経営破綻です。</p>`;
   } else if (tab === 'log') {
     h = `<div class="row"><button class="btn" data-act="help">遊び方</button><button class="btn" data-act="save">保存</button>
-      <button class="btn danger" data-act="reset">${pendingConfirm === 'reset' ? 'もう一度押すと最初から' : '最初からやり直す'}</button></div>
-      <h3>実績</h3><div class="ach">${ACHIEVEMENTS.map(([id, nm]) => `<div class="${S.ach[id] ? 'got' : ''}">${S.ach[id] ? '★' : '☆'} ${nm}</div>`).join('')}</div>
+      <button class="btn" data-act="title">タイトルへ</button></div>
       <h3>運行記録</h3><ul class="logList">${S.log.map(l => `<li><span class="d">${dateStr(l.t)}</span><span>${l.msg}</span></li>`).join('') || '<li><span></span><span class="hint">まだ記録はありません</span></li>'}</ul>`;
   }
   body.innerHTML = h;
   if (tab === 'finance') drawFinChart();
+}
+function popTrend(c) {
+  const p = c.hist.length >= 2 ? c.hist[c.hist.length - 2] : c.pop;
+  return (c.pop - p) / p;
+}
+const pct = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
+function cityListHtml() {
+  const served = servedSet();
+  const order = S.cities.map((c, i) => i).sort((a, b) => S.cities[b].pop - S.cities[a].pop);
+  let h = `<p class="hint">地図の都市をタップするか、一覧から選ぶと詳しい情報が出ます。人口の多い順。</p><div class="list">`;
+  order.forEach(i => {
+    const c = S.cities[i], tr = popTrend(c);
+    h += `<button class="cityRow" data-act="selCity" data-city="${i}">
+      <span><div class="nm">${c.name}</div><div class="sub">${c.kind}${c.tag ? '・' + TAG_LABEL[c.tag].replace(/（.*）/, '') : ''}</div></span>
+      <span class="num">${man(Math.round(c.pop * 1000))}人 <span class="${tr >= 0 ? 'pos' : 'neg'}">${tr >= 0 ? '▲' : '▼'}</span></span>
+      <span class="st ${served.has(i) ? 'on' : ''}">${served.has(i) ? '駅あり' : '駅なし'}</span></button>`;
+  });
+  return h + '</div>';
+}
+function sparkline(vals) {
+  if (vals.length < 2) return '<p class="hint">人口の推移は来月から記録されます。</p>';
+  const mn = Math.min(...vals), mx = Math.max(...vals), span = mx - mn || 1;
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1) * 196 + 2).toFixed(1)},${(42 - (v - mn) / span * 36).toFixed(1)}`).join(' ');
+  const [lx, ly] = pts.split(' ').pop().split(',');
+  return `<svg class="spark" viewBox="0 0 200 46" preserveAspectRatio="none" aria-label="人口の推移">
+    <polyline points="${pts}" fill="none" stroke="var(--led)" stroke-width="1.6" vector-effect="non-scaling-stroke"></polyline>
+    <circle cx="${lx}" cy="${ly}" r="2.5" fill="var(--led)"></circle></svg>
+    <div class="row hint" style="justify-content:space-between"><span>${vals.length}か月前</span><span>最小 ${man(Math.round(mn * 1000))} ／ 最大 ${man(Math.round(mx * 1000))}</span><span>今</span></div>`;
+}
+function cityDetailHtml(i) {
+  const c = S.cities[i];
+  const lines = S.lines.filter(L => L.path.includes(i));
+  const w = S.waiting[i];
+  const dests = Object.keys(w).map(k => [+k, w[k]]).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const wt = waitTotal(i), cap = waitCap(i);
+  // 昼夜間人口比：住民の半分が働きに出て、市内の職場に人が入ってくると考える
+  const dayRatio = (c.pop * 0.5 + c.jobs) / c.pop;
+  const dayLabel = dayRatio >= 1.1 ? '昼に人が集まる街' : dayRatio <= 0.85 ? 'ベッドタウン' : '住む人と働く人が釣り合う街';
+  const tourStars = c.tour >= 60 ? 5 : c.tour >= 30 ? 4 : c.tour >= 15 ? 3 : c.tour >= 6 ? 2 : 1;
+  let h = `<div class="row"><button class="btn" data-act="cityList">← 都市一覧</button>
+      <h3>${c.name}<span class="kana">　${c.kana}</span></h3><span class="chip">${c.kind}</span></div>
+    <p class="desc">${c.desc}</p>
+    <div class="chips">${c.spots.map(x => `<span class="chip">${x}</span>`).join('')}</div>
+    <dl class="kv">
+      <dt>人口</dt><dd><span class="num">${Math.round(c.pop * 1000).toLocaleString()}</span>人 <span class="${popTrend(c) >= 0 ? 'pos' : 'neg'}">（前月比 ${pct(popTrend(c))}）</span></dd>
+      <dt>市内で働く人</dt><dd><span class="num">${Math.round(c.jobs * 1000).toLocaleString()}</span>人</dd>
+      <dt>昼夜間人口比</dt><dd><span class="num">${Math.round(dayRatio * 100)}%</span>（${dayLabel}）</dd>
+      <dt>観光の人気</dt><dd class="stars">${'★'.repeat(tourStars)}${'☆'.repeat(5 - tourStars)}</dd>
+      ${c.tag ? `<dt>特徴</dt><dd>${TAG_LABEL[c.tag]}</dd>` : ''}
+      ${effActive('fest', i) ? '<dt>行事</dt><dd class="pos">祭りの期間中で、需要が2.5倍</dd>' : ''}
+    </dl>
+    <div><span class="hint">人口の推移</span>${sparkline(c.hist.slice(-24))}</div>`;
+  if (!lines.length) return h + '<p class="hint">まだ駅がありません。「建設」タブから路線を敷くとこの街に駅ができ、人口も伸びやすくなります。</p>';
+  h += `<dl class="kv">
+      <dt>乗り入れ</dt><dd>${lines.map(L => `<button class="btn" data-act="cityLine" data-line="${L.id}"><span class="badge" style="--c:${L.color}">${L.code}</span></button>`).join(' ')}</dd>
+      <dt>駅の利用者</dt><dd>今月 <span class="num">${c.users.toLocaleString()}</span>人 ／ 先月 <span class="num">${c.usersPrev.toLocaleString()}</span>人</dd>
+      <dt>この街に来た人</dt><dd>今月 <span class="num">${c.arr.toLocaleString()}</span>人 ／ 先月 <span class="num">${c.arrPrev.toLocaleString()}</span>人</dd>
+      <dt>ホームの待ち客</dt><dd><span class="num ${wt / cap > 0.8 ? 'neg' : ''}">${wt}</span> / ${cap}人<div class="bar"><i style="width:${Math.min(100, wt / cap * 100)}%"></i></div></dd>
+    </dl>`;
+  if (dests.length) {
+    h += '<div class="bars"><span class="hint">待っている人の行き先</span>';
+    dests.forEach(([d, n]) => { h += `<div class="row" style="justify-content:space-between"><span>${S.cities[d].name}</span><span class="num">${n}人</span></div>`; });
+    h += '</div>';
+  }
+  if (wt / cap > 0.8) h += '<p class="hint neg">ホームが混雑しています。あふれた乗客は帰ってしまい、評判が下がります。車両を増やしましょう。</p>';
+  return h;
+}
+function goalHtml() {
+  let h = '';
+  const sc = S.scenario && scenarioOf(S.scenario);
+  if (sc) {
+    const status = S.result ? (S.result.win ? `<span class="pos">クリア ${'★'.repeat(S.result.stars)}</span>` : '<span class="neg">失敗</span>') : `残り <span class="num">${monthsLeft()}</span>か月`;
+    h += `<h3>${sc.name}</h3><p class="desc">${sc.brief}</p><div class="hint">期限 ${sc.months}か月（${status}）</div><div class="list">`;
+    sc.goals().forEach((g, i) => {
+      const done = !!S.goalDone[i];
+      const v = g.value();
+      const ratio = Math.max(0, Math.min(1, v / g.target));
+      h += `<div class="goal ${done ? 'done' : ''}"><div class="top"><span>${done ? '✓' : '○'} ${g.label}</span><span class="num">${done ? '達成' : g.fmt(v)}</span></div>
+        <div class="bar"><i style="width:${(done ? 1 : ratio) * 100}%"></i></div></div>`;
+    });
+    h += '</div>';
+  } else {
+    h += '<h3>フリープレイ</h3><p class="hint">期限も目標もありません。下の実績を目安に、自由に路線網を広げてください。シナリオはタイトル画面から選べます。</p>';
+  }
+  h += `<h3>実績</h3><div class="ach">${ACHIEVEMENTS.map(([id, nm]) => `<div class="${S.ach[id] ? 'got' : ''}">${S.ach[id] ? '★' : '☆'} ${nm}</div>`).join('')}</div>`;
+  return h;
 }
 function drawFinChart() {
   const c = document.getElementById('finChart');
@@ -1354,33 +1635,84 @@ function updateHud() {
   m.classList.toggle('neg', S.money < 0);
   $('#hDate').textContent = dateStr(S.t, true);
   $('#hRep').textContent = Math.round(S.rep) + (effActive('storm') ? ' 台風' : '');
+  const showLeft = !!(S.scenario && !S.result);
+  $('#mLeft').hidden = !showLeft;
+  if (showLeft) $('#hLeft').textContent = monthsLeft() + 'か月';
 }
 
 // ===== オーバーレイ =====
-function showHelp() {
+let overlayBack = null;   // 遊び方を閉じたときに戻る画面
+function overlay(html) {
   const o = $('#overlay');
-  o.innerHTML = `<div class="card"><h2>みなと交通 運行指令所</h2>
-    <p>あなたは新しい交通会社の社長です。資金5億円を元手に、15の都市を鉄道・バス・新幹線で結び、会社を大きくしてください。</p>
+  o.innerHTML = `<div class="card">${html}</div>`;
+  o.hidden = false;
+  o.querySelector('.card').scrollTop = 0;
+}
+function showHelp(back) {
+  overlayBack = back || null;
+  overlay(`<h2>遊び方</h2>
+    <p>あなたは交通会社の社長です。20の街を鉄道・バス・新幹線で結び、会社を大きくしてください。</p>
     <ol>
       <li>「建設」タブで交通手段を選び、地図の駅を順にタップして「開業する」。</li>
-      <li>乗客は人口の多い都市どうしほど多く発生し、朝夕のラッシュに増えます。乗り換えも自動で行います。</li>
+      <li>乗客は、住む人の多い街から働く場所の多い街への通勤と、観光地への旅行で生まれます。朝夕のラッシュと週末の行楽で増え方が変わります。乗り換えは自動です。</li>
+      <li>「都市」タブで街ごとの人口・働く人・観光の人気・駅の利用者が見られます。駅があって評判が良い街ほど人口が増えます。</li>
       <li>ホームの待ち客（駅の周りのリング）が赤くなったら車両を増やしましょう。あふれると評判が下がります。</li>
       <li>運賃を上げると1人あたりの収入は増えますが、乗客は減ります。</li>
       <li>毎月、車両と線路の維持費がかかります。資金がマイナスのまま3か月続くと破綻です。</li>
     </ol>
     <p class="hint">地図はドラッグで移動、ホイールかピンチで拡大できます。表示中のタブをもう一度押すとパネルを畳めます。進行は毎月自動保存されます。</p>
-    <button class="btn primary" data-act="closeOverlay">運行開始</button></div>`;
-  o.hidden = false;
+    <button class="btn primary" data-act="closeOverlay">${back === 'title' ? '戻る' : back === 'game' ? '閉じる' : '運行開始'}</button>`);
+}
+function showTitle() {
+  speed = 1; syncSpeed();
+  overlayBack = null;
+  const saved = load();
+  const clears = loadClears();
+  const canContinue = saved && !saved.over && !(saved.result && !saved.result.win);
+  const savedName = saved && saved.scenario ? `シナリオ「${scenarioOf(saved.scenario).name}」` : 'フリープレイ';
+  overlay(`<h2>みなと交通指令所</h2>
+    <p class="desc">鉄道・バス・新幹線で20の街を結ぶ、交通会社の経営ゲーム。</p>
+    ${canContinue ? `<button class="btn primary" data-act="continue">続きから　<span style="font-weight:400">${savedName}・${dateStr(saved.t)}</span></button>` : ''}
+    <h3>シナリオ</h3>
+    <div class="scList">${SCENARIOS.map(sc => `<div class="sc">
+      <div class="top"><b>${sc.name}</b><span class="lv">難易度 ${'●'.repeat(sc.level)}${'○'.repeat(5 - sc.level)}</span></div>
+      <p class="hint">${sc.brief}</p>
+      <div class="foot"><span class="hint">期限 ${sc.months}か月　<span class="stars">${clears[sc.id] ? '★'.repeat(clears[sc.id]) + '☆'.repeat(3 - clears[sc.id]) : '未クリア'}</span></span>
+      <button class="btn" data-act="newScenario" data-id="${sc.id}">挑戦する</button></div></div>`).join('')}</div>
+    <h3>フリープレイ</h3>
+    <p class="hint">期限も目標もなく、資金5億円から自由に路線網を広げます。</p>
+    <div class="row"><button class="btn" data-act="newFree">フリープレイを始める</button><button class="btn" data-act="help">遊び方</button></div>
+    ${saved ? '<p class="hint">新しく始めると、今の続きのデータは上書きされます。</p>' : ''}`);
+}
+function showBriefing() {
+  const sc = scenarioOf(S.scenario);
+  overlay(`<h2>${sc.name}</h2>
+    <p class="desc">${sc.brief}</p>
+    <dl class="kv"><dt>資金</dt><dd class="num">${yen(S.money)}</dd>${S.loan ? `<dt>借入金</dt><dd class="num">${yen(S.loan)}</dd>` : ''}
+      <dt>期限</dt><dd>${sc.months}か月（${dateStr(S.t)} 〜）</dd></dl>
+    <h3>目標</h3><ol>${sc.goals().map(g => `<li>${g.label}</li>`).join('')}</ol>
+    <p class="hint">目標はすべて、期限内に一度でも達成すればクリアです。進み具合は「目標」タブで確認できます。期限の半分以内なら★3つ、4分の3以内なら★2つです。</p>
+    <button class="btn primary" data-act="closeOverlay">運行開始</button>`);
+}
+function showResult() {
+  speed = 0; syncSpeed();
+  const sc = scenarioOf(S.scenario);
+  const r = S.result;
+  const goals = sc.goals().map((g, i) => `<li>${S.goalDone[i] ? '✓' : '✗'} ${g.label}</li>`).join('');
+  overlay(r.win
+    ? `<h2>シナリオクリア</h2><p class="stars" style="font-size:28px">${'★'.repeat(r.stars)}${'☆'.repeat(3 - r.stars)}</p>
+       <p>「${sc.name}」を ${r.months}か月 で達成しました。</p><ul style="margin:0;padding-left:1.2em">${goals}</ul>
+       <div class="row"><button class="btn primary" data-act="closeOverlay">このまま経営を続ける</button><button class="btn" data-act="title">タイトルへ</button></div>`
+    : `<h2>期限切れ</h2><p>「${sc.name}」の期限 ${sc.months}か月 が過ぎました。</p><ul style="margin:0;padding-left:1.2em">${goals}</ul>
+       <div class="row"><button class="btn primary" data-act="newScenario" data-id="${sc.id}">もう一度挑戦</button><button class="btn" data-act="title">タイトルへ</button></div>`);
 }
 function showGameOver() {
   speed = 0; syncSpeed();
-  const o = $('#overlay');
-  o.innerHTML = `<div class="card"><h2>経営破綻</h2>
+  overlay(`<h2>経営破綻</h2>
     <p>資金不足が3か月続き、会社は経営破綻しました。</p>
     <dl class="kv"><dt>営業期間</dt><dd>${dateStr(0)} 〜 ${dateStr(S.t)}</dd><dt>累計乗客</dt><dd class="num">${S.totalPax.toLocaleString()}人</dd><dt>路線数</dt><dd>${S.lines.length}</dd></dl>
-    <button class="btn primary" data-act="reset">新しい会社で再挑戦</button></div>`;
-  o.hidden = false;
-  pendingConfirm = 'reset';
+    <div class="row">${S.scenario ? `<button class="btn primary" data-act="newScenario" data-id="${S.scenario}">もう一度挑戦</button>` : '<button class="btn primary" data-act="newFree">新しい会社で再挑戦</button>'}
+    <button class="btn" data-act="title">タイトルへ</button></div>`);
 }
 
 // ===== 保存 =====
@@ -1389,25 +1721,46 @@ function save() {
 }
 function load() {
   try {
-    const s = localStorage.getItem(SAVE_KEY);
-    return s ? JSON.parse(s) : null;
+    const o = JSON.parse(localStorage.getItem(SAVE_KEY));
+    return o && o.v === 2 ? o : null;
   } catch (e) { return null; }
 }
 
 // ===== 起動 =====
 let looping = false;
-function start(data, fresh) {
-  S = (!fresh && ((data && data.state) || load())) || newGame();
+function initGame() {
   selLine = null; selCity = null; draft = null; FX = []; ACC = [];
-  readColors();
-  if (!terrain) buildTerrain();
-  resize(); fitView();
+  tab = 'lines';
+  $('#toast').style.opacity = 0;
+  $('#panel').classList.remove('collapsed');
+  fitView();
   rebuild();
   renderBuildBar();
   syncSpeed(); syncTabs();
-  $('#overlay').hidden = true;
-  if (fresh || !S.log.length) showHelp();
-  if (S.over) showGameOver();
+}
+function newRun(id) {
+  S = newGame();
+  if (id) {
+    const sc = scenarioOf(id);
+    S.scenario = id;
+    sc.setup();
+    S.endMonth = monthOf(S.t) + sc.months;
+    log(`シナリオ「${sc.name}」を開始しました。`);
+  } else log('フリープレイを開始しました。');
+  speed = 1;
+  initGame();
+  save();
+  if (id) showBriefing(); else showHelp();
+}
+function start(data) {
+  readColors();
+  if (!terrain) buildTerrain();
+  resize();
+  const hot = data && data.state;
+  S = (hot && hot.v === 2 ? hot : null) || load() || newGame();
+  initGame();
+  if (hot && hot.v === 2) $('#overlay').hidden = true;
+  else showTitle();
   if (!looping) { looping = true; requestAnimationFrame(frame); }
 }
 let last = performance.now(), panelTimer = 0;

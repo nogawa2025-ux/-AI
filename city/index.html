@@ -22,10 +22,10 @@
   --warn: #f2c94c;
   --bad: #ff6262;
   --land: #1b2632;
-  --block-res: #2c4a3a;
-  --block-com: #4a3f2a;
-  --block-off: #2f3f5c;
-  --block-ind: #4a3346;
+  --block-res: #24402f;
+  --block-com: #4d4026;
+  --block-off: #2c4470;
+  --block-ind: #4a2f45;
   --block-park: #22412b;
   --water: #0b1a2c;
   --road: #4a5868;
@@ -89,16 +89,23 @@ body {
 .layers button.on { background: var(--led); color: var(--bg); border-color: var(--led); }
 #legend { position: absolute; left: max(10px, env(safe-area-inset-left, 0px)); bottom: 54px; padding: 6px 10px; border-radius: 6px; background: rgba(18, 27, 38, 0.9); border: 1px solid var(--rule); font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; max-width: calc(100% - 80px); }
 #legend i { display: inline-block; width: 14px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
-#buildBar { position: absolute; top: 10px; left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px)); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; background: rgba(18, 27, 38, 0.96); border: 1px solid var(--led); border-radius: 8px; }
-@media (max-width: 899px) {
-  #buildBar { top: auto; bottom: 10px; right: calc(max(10px, env(safe-area-inset-right, 0px)) + 46px); }
-  #mapWrap.building .layers, #mapWrap.building #legend { display: none; }
-}
-@media (min-width: 900px) { #mapWrap.building #toast { top: auto; bottom: 60px; } }
+#buildBar { position: absolute; bottom: 10px; left: max(10px, env(safe-area-inset-left, 0px)); right: calc(max(10px, env(safe-area-inset-right, 0px)) + 46px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; background: rgba(18, 27, 38, 0.96); border: 1px solid var(--led); border-radius: 8px; }
+#mapWrap.building .layers, #mapWrap.building #legend { display: none; }
+#topStack { position: absolute; top: 10px; left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; pointer-events: none; }
+#topStack > * { pointer-events: auto; }
+#guide { max-width: 460px; width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px; background: rgba(18, 27, 38, 0.96); border: 1px solid var(--rule); border-left: 4px solid var(--led); display: grid; gap: 6px; font-size: 13px; line-height: 1.6; }
+#guide .step { font-family: var(--font-led); color: var(--led); font-size: 12px; letter-spacing: 0.08em; }
+#guide .ttl { font-weight: 700; font-size: 14px; }
+#guide .row { justify-content: flex-end; }
+#guide.mini { padding: 6px 10px; }
+@media (max-width: 899px) { #guide { font-size: 12px; padding: 8px 10px; gap: 4px; } #guide .ttl { font-size: 13px; } #legend { display: none; } }
+.pulse { animation: pulse 1.2s ease-in-out infinite; position: relative; z-index: 1; }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 181, 71, 0.9); } 50% { box-shadow: 0 0 0 6px rgba(255, 181, 71, 0); } }
+.lock { opacity: 0.55; }
 #buildBar .info { flex: 1 1 240px; min-width: 0; font-size: 13px; line-height: 1.5; }
 #buildBar .info b { color: var(--led); font-family: var(--font-led); font-weight: 400; }
 #buildBar .route { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-#toast { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); max-width: calc(100% - 80px); padding: 8px 14px; border-radius: 6px; background: rgba(10, 16, 24, 0.95); border: 1px solid var(--rule); font-size: 13px; pointer-events: none; transition: opacity 0.3s; }
+#toast { position: relative; max-width: 100%; padding: 8px 14px; border-radius: 6px; background: rgba(10, 16, 24, 0.95); border: 1px solid var(--rule); font-size: 13px; pointer-events: none; transition: opacity 0.3s; }
 
 #panel { grid-area: panel; display: flex; flex-direction: column; min-height: 0; max-height: 44vh; background: var(--panel); border-top: 1px solid var(--rule); }
 @media (min-width: 900px) { #panel { max-height: none; border-top: 0; border-left: 1px solid var(--rule); } }
@@ -159,7 +166,7 @@ details summary { cursor: pointer; }
 #overlay .card { max-width: 500px; max-height: 86vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 20px 22px; display: grid; gap: 12px; line-height: 1.7; }
 #overlay h2 { margin: 0; font-family: var(--font-led); font-weight: 400; color: var(--led); font-size: 22px; letter-spacing: 0.06em; }
 #overlay ol { margin: 0; padding-left: 1.3em; font-size: 13px; }
-@media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
+@media (prefers-reduced-motion: reduce) { #toast { transition: none; } .pulse { animation: none; outline: 3px solid var(--led); } }
 </style>
 </head>
 <body>
@@ -168,8 +175,8 @@ details summary { cursor: pointer; }
     <div class="brand">みなと市交通局<small>運行指令所</small></div>
     <div class="meter"><span class="lbl">資金</span><span class="val" id="hMoney">—</span></div>
     <div class="meter"><span class="lbl">日時</span><span class="val" id="hDate">—</span></div>
-    <div class="meter"><span class="lbl">公共交通の分担率</span><span class="val" id="hShare">—</span></div>
-    <div class="meter"><span class="lbl">渋滞</span><span class="val" id="hJam">—</span></div>
+    <div class="meter"><span class="lbl">公共交通の利用率</span><span class="val" id="hShare">—</span></div>
+    <div class="meter"><span class="lbl">道路</span><span class="val" id="hJam">—</span></div>
     <div class="speed" id="speedBtns">
       <button data-speed="0" aria-label="一時停止">II</button>
       <button data-speed="1" aria-label="等速">1×</button>
@@ -191,7 +198,7 @@ details summary { cursor: pointer; }
       <button id="zOut" aria-label="縮小">−</button>
       <button id="zFit" aria-label="全体表示">⤢</button>
     </div>
-    <div id="toast" style="opacity:0"></div>
+    <div id="topStack"><div id="guide" hidden></div><div id="toast" style="opacity:0"></div></div>
   </main>
   <aside id="panel">
     <nav id="tabs">
@@ -220,11 +227,11 @@ const ACCESS_R = 90;              // 駅・停留所まで歩いてもよい距�
 const BASE_DATE = Date.UTC(2026, 3, 1);
 
 const MODES = {
-  bus:   { key: 'bus',   name: 'バス',     code: 'B', road: true,  speed: 45,  cap: 70,   stopCost: 5e5, segCost: 0,      vehCost: 3e6,  vehUp: 1e4,  trackUp: 0,   fare: 220, dwell: 0.5, stopCap: 160,  w: 3, unit: '台' },
-  tram:  { key: 'tram',  name: '路面電車', code: 'T', road: true,  speed: 55,  cap: 160,  stopCost: 3e6, segCost: 1.5e5,  vehCost: 2e7,  vehUp: 3e4,  trackUp: 150, fare: 200, dwell: 0.5, stopCap: 320,  w: 4, unit: '編成' },
-  metro: { key: 'metro', name: '地下鉄',   code: 'M', road: false, speed: 110, cap: 800,  stopCost: 8e7, segCost: 6e5,    vehCost: 6e7,  vehUp: 1.5e5, trackUp: 600, fare: 250, dwell: 0.6, stopCap: 1800, w: 5, unit: '編成' },
-  rail:  { key: 'rail',  name: '郊外鉄道', code: 'R', road: false, speed: 140, cap: 1000, stopCost: 5e7, segCost: 3e5,    vehCost: 6e7,  vehUp: 1.5e5, trackUp: 400, fare: 300, dwell: 1,   stopCap: 2200, w: 5, unit: '編成' },
-  ferry: { key: 'ferry', name: '水上バス', code: 'F', road: false, speed: 50,  cap: 150,  stopCost: 4e7, segCost: 0,      vehCost: 3e7,  vehUp: 4e4,  trackUp: 0,   fare: 400, dwell: 2,   stopCap: 320,  w: 3, unit: '隻' },
+  bus:   { key: 'bus',   name: 'バス',     code: 'B', road: true,  speed: 45,  cap: 70,   stopCost: 5e5, segCost: 0,      vehCost: 3e6,  vehUp: 1e4,  trackUp: 0,   fare: 220, dwell: 0.5, stopCap: 160,  w: 5, unit: '台' },
+  tram:  { key: 'tram',  name: '路面電車', code: 'T', road: true,  speed: 55,  cap: 160,  stopCost: 3e6, segCost: 1.5e5,  vehCost: 2e7,  vehUp: 3e4,  trackUp: 150, fare: 200, dwell: 0.5, stopCap: 320,  w: 5, unit: '編成' },
+  metro: { key: 'metro', name: '地下鉄',   code: 'M', road: false, speed: 110, cap: 800,  stopCost: 8e7, segCost: 6e5,    vehCost: 6e7,  vehUp: 1.5e5, trackUp: 600, fare: 250, dwell: 0.6, stopCap: 1800, w: 6, unit: '編成' },
+  rail:  { key: 'rail',  name: '郊外鉄道', code: 'R', road: false, speed: 140, cap: 1000, stopCost: 5e7, segCost: 3e5,    vehCost: 6e7,  vehUp: 1.5e5, trackUp: 400, fare: 300, dwell: 1,   stopCap: 2200, w: 6, unit: '編成' },
+  ferry: { key: 'ferry', name: '水上バス', code: 'F', road: false, speed: 50,  cap: 150,  stopCost: 4e7, segCost: 0,      vehCost: 3e7,  vehUp: 4e4,  trackUp: 0,   fare: 400, dwell: 2,   stopCap: 320,  w: 4, unit: '隻' },
 };
 const MODE_NOTE = {
   bus: '道路を走るので、渋滞するとそのまま遅れる。安く始められる。',
@@ -254,17 +261,20 @@ const DISTRICT_NAMES = ['北野', '白山', '緑町', '旭ヶ丘', '西浜', '�
 const NUMS = ['', '二丁目', '三丁目', '四丁目', '五丁目', '六丁目', '七丁目', '八丁目', '九丁目'];
 
 const GOALS = [
-  { id: 'first', label: '最初の路線を開業する', reward: 1e8, test: () => S.lines.length >= 1 },
-  { id: 'riders10k', label: '1日の利用者 1万人', reward: 2e8, test: () => S.yday.rides >= 1e4 },
-  { id: 'share10', label: '公共交通の分担率 10%', reward: 2e8, test: () => S.yday.share >= 0.10 },
-  { id: 'metro', label: '地下鉄を開業する', reward: 3e8, test: () => S.lines.some(l => l.mode === 'metro') },
-  { id: 'suburb', label: '郊外と鉄道でつなぐ', reward: 3e8, test: () => S.ext.some(e => e.served) },
-  { id: 'share20', label: '公共交通の分担率 20%', reward: 4e8, test: () => S.yday.share >= 0.20 },
-  { id: 'riders100k', label: '1日の利用者 10万人', reward: 5e8, test: () => S.yday.rides >= 1e5 },
-  { id: 'commute', label: '平均通勤時間 28分以下', reward: 5e8, test: () => S.yday.avgT > 0 && S.yday.avgT <= 28 },
-  { id: 'jam', label: '渋滞度を 30 以下に', reward: 5e8, test: () => S.yday.jam > 0 && S.yday.jam <= 30 },
-  { id: 'share35', label: '公共交通の分担率 35%', reward: 1e9, test: () => S.yday.share >= 0.35 },
+  { id: 'first', label: '最初の路線を開業する', reward: 1e8, test: () => S.lines.length >= 1, hint: '「建設」タブからバス路線を作りましょう。' },
+  { id: 'riders10k', label: '1日の利用者 1万人', reward: 2e8, test: () => S.yday.rides >= 1e4, hint: '住宅地と都心（オフィス街）を結ぶバス路線を増やしましょう。達成すると路面電車と地下鉄が作れるようになります。' },
+  { id: 'share10', label: '公共交通の利用率 10%', reward: 2e8, test: () => S.yday.share >= 0.10, hint: '赤い「!」の場所に路線を伸ばし、輪が赤い停留所の路線には車両を足しましょう。達成すると郊外鉄道と水上バスが作れます。' },
+  { id: 'metro', label: '地下鉄を開業する', reward: 3e8, test: () => S.lines.some(l => l.mode === 'metro'), hint: '地下鉄は渋滞と関係なく速く走れます。都心を通る路線がおすすめです。' },
+  { id: 'suburb', label: '郊外と鉄道でつなぐ', reward: 3e8, test: () => S.ext.some(e => e.served), hint: '郊外鉄道で、地図の端にある郊外（オレンジの文字）のすぐ近くに駅を置きましょう。' },
+  { id: 'share20', label: '公共交通の利用率 20%', reward: 4e8, test: () => S.yday.share >= 0.20, hint: '路線どうしが交わる交差点に停留所を置くと、乗り換えができて便利になります。' },
+  { id: 'riders100k', label: '1日の利用者 10万人', reward: 5e8, test: () => S.yday.rides >= 1e5, hint: '車両を増やして待ち時間を短くし、街全体に路線を広げましょう。' },
+  { id: 'commute', label: '平均通勤時間 28分以下', reward: 5e8, test: () => S.yday.avgT > 0 && S.yday.avgT <= 28, hint: '混んでいる道にはバス専用レーンを作るか、地下鉄を通しましょう。' },
+  { id: 'jam', label: '道路の渋滞度を 30 以下に', reward: 5e8, test: () => S.yday.jam > 0 && S.yday.jam <= 30, hint: '橋の渋滞がひどいなら、川を越える地下鉄や水上バスが効きます。' },
+  { id: 'share35', label: '公共交通の利用率 35%', reward: 1e9, test: () => S.yday.share >= 0.35, hint: '街全体を網の目のように路線でおおいましょう。' },
 ];
+// 交通手段は目標を達成すると順に作れるようになる
+const UNLOCK = { tram: 'riders10k', metro: 'riders10k', rail: 'share10', ferry: 'share10' };
+const unlocked = m => !UNLOCK[m] || !!S.goals[UNLOCK[m]];
 
 // ===== 状態 =====
 let MAP;          // 地図（道路・街区）。シードから毎回同じものを作る
@@ -272,6 +282,7 @@ let S;            // 保存するゲーム状態
 let ROAD = null;  // 道路の最短時間表
 let TR = null;    // 公共交通の最短時間表と乗り換え案内
 let FLOWS = new Map();   // 今の1時間に駅で発生する利用者（出発停留所×到着停留所 → 毎分の人数）
+let NEEDS = [], DLABELS = [], TUT_NODES = [];
 let view = { x: 0, y: 0, s: 1 };
 let speed = 1, tab = 'lines', layer = 'normal';
 let selLine = null, sel = null;   // sel: {kind:'stop'|'block'|'link', id}
@@ -438,7 +449,7 @@ function genMap() {
 
 function newGame() {
   return {
-    v: 1, money: 1.5e9, loan: 0, t: 5 * 60, sat: 50,
+    v: 1, tut: 0, guideHidden: false, money: 1.5e9, loan: 0, t: 5 * 60, sat: 50,
     stops: [], lines: [], vehicles: [],
     waiting: [],                       // waiting[停留所] = {行き先停留所: 人数}
     tracks: {},                        // 地下鉄・鉄道・水上バスの線路（駅間の経由点）
@@ -576,6 +587,9 @@ function computeAccess() {
     return out.sort((a, b) => a.w - b.w).slice(0, 4);
   };
   MAP.blocks.forEach(b => (b._acc = near(b.x, b.y, ACCESS_R)));
+  // 乗り場がない街区のうち、人の多いところを4つ選んで地図に印を付ける
+  NEEDS = MAP.blocks.map((b, i) => ({ b, n: S.pop[i][0] + S.pop[i][1] })).filter(x => !x.b._acc.length && x.b.type !== 'park')
+    .sort((a, b) => b.n - a.n).slice(0, 4).map(x => x.b);
   MAP.exts.forEach((e, i) => {
     e._acc = near(e.x, e.y, 90).filter(a => S.stops[a.s].modes.rail);
     S.ext[i].served = e._acc.length > 0;
@@ -827,7 +841,7 @@ function onDay() {
   D.jam = D.jamN ? Math.round(D.jamSum / D.jamN * 100) : 0;
   const up = dailyUpkeep();
   const interest = S.loan * 0.0002;
-  // 市からの補助金：分担率が高く、渋滞が少ないほど多い
+  // 市からの補助金：利用率が高く、渋滞が少ないほど多い
   const sub = 1.5e7 + D.share * 3e8 + Math.max(0, 50 - D.jam) * 1e6;
   S.money += sub - up - interest;
   D.cost += up + interest; D.sub = sub;
@@ -840,7 +854,7 @@ function onDay() {
   S.pop.forEach(p => { p[0] *= 1 + g; p[1] *= 1 + g * 0.8; });
   S.hist.push({ day: dateStr(S.t - 1), share: D.share, avgT: D.avgT, jam: D.jam, rides: D.rides, rev: D.rev, cost: D.cost, sub: D.sub });
   if (S.hist.length > 30) S.hist.shift();
-  log(`${dateStr(S.t - 1)}：利用 ${man(D.rides)}人・分担率 ${pct(D.share)}・渋滞度 ${D.jam}・収支 ${yen(D.rev + D.sub - D.cost)}`);
+  log(`${dateStr(S.t - 1)}：利用 ${man(D.rides)}人・利用率 ${pct(D.share)}・渋滞度 ${D.jam}・収支 ${yen(D.rev + D.sub - D.cost)}`);
   S.yday = D;
   S.today = blankDay();
   S.lines.forEach(L => { L.ridesY = L.rides || 0; L.revY = L.rev || 0; L.rides = 0; L.rev = 0; });
@@ -860,6 +874,8 @@ function checkGoals() {
     S.money += g.reward;
     log(`🎯 目標達成：${g.label}（市から ${yen(g.reward)}）`);
     toast(`目標達成：${g.label}　${yen(g.reward)}`);
+    const opened = Object.keys(UNLOCK).filter(m => UNLOCK[m] === g.id).map(m => MODES[m].name);
+    if (opened.length) { log(`🔓 ${opened.join('と')}が作れるようになりました。`); setTimeout(() => toast(`${opened.join('と')}が作れるようになりました`), 3000); }
   });
 }
 
@@ -959,7 +975,7 @@ function draftTap(sx, sy) {
   const p = toWorld(sx, sy);
   const M = MODES[draft.mode];
   if (M.road) {
-    const n = nearestNode(p, 28 / view.s);
+    const n = nearestNode(p, 40 / view.s);
     if (n < 0) { toast('交差点の近くをタップしてください'); return; }
     if (draft.via) {
       if (!draft.stops.length) { toast('先に始点の停留所をタップしてください'); return; }
@@ -1019,6 +1035,7 @@ function cancelBuild() {
   $('#panel').classList.remove('collapsed');
 }
 function renderBuildBar() {
+  if (S) setTimeout(renderGuide, 0);
   const bar = $('#buildBar');
   $('#mapWrap').classList.toggle('building', !!(draft || tool));
   if (tool === 'busLane') {
@@ -1034,18 +1051,23 @@ function renderBuildBar() {
   const ok = draft.stops.length >= 2 && draft.added > 0 && info.ok && !draft.pending.length;
   const L = draft.lineId && lineById(draft.lineId);
   const names = draft.stops.map(s => S.stops[s].name).join(' → ') || (M.road ? '（交差点をタップ）' : '（駅を置く場所をタップ）');
+  // 今やることを①②③の手順で示す
+  const where = M.road ? '交差点（オレンジの丸）' : '地図の好きな場所';
+  const n = draft.stops.length - (L ? L.stops.length : 0);
   let warn = info.msg;
-  if (!warn && draft.pending.length) warn = `経由点 ${draft.pending.length}個。続けて次の${M.road ? '停留所' : '駅'}をタップしてください。`;
-  if (!warn && draft.via) warn = M.road ? '経由モード：タップした交差点を通りますが、停まりません。' : '経由モード：タップした地点を線路が通ります。';
-  if (!warn && draft.stops.length) warn = M.road ? '交差点をタップすると停留所になり、道路に沿って経路が引かれます。' : '空き地をタップすると駅、既存の駅をタップすると乗り入れになります。';
+  if (!warn && draft.pending.length) warn = `通り道 ${draft.pending.length}か所を指定中。続けて次の${M.road ? '停留所' : '駅'}をタップしてください。`;
+  else if (!warn && draft.via) warn = M.road ? '通り道の指定中：タップした交差点を通りますが、停まりません。終わったらもう一度「通り道を指定」を押してください。' : '通り道の指定中：タップした地点を線路が通ります。';
+  else if (!warn && !draft.stops.length) warn = `① ${where}をタップして、始点の${M.road ? '停留所' : '駅'}を置きましょう。`;
+  else if (!warn && (L ? n <= 0 : draft.stops.length < 2)) warn = `② 次の${M.road ? '停留所' : '駅'}にしたい${where}をタップしましょう。${M.road ? '道路に沿って線が自動で引かれます。' : ''}`;
+  else if (!warn) warn = `③ もっと続けるならタップ、終わりなら「${L ? '延伸する' : '開業する'}」を押しましょう。`;
   bar.hidden = false;
   bar.innerHTML = `
     <div class="info">${L ? `<span class="badge" style="--c:${L.color}">${L.code}</span> ${L.name} を延伸` : `${M.name}の新路線`}　建設費 <b>${yen(info.cost)}</b>${!L ? `<span class="hint">（車両2${M.unit}込み）</span>` : ''}
       <div class="route">${names}</div>
       <div class="route">新しい区間 ${(info.len / 100).toFixed(1)}km</div>
-      ${warn ? `<div class="route ${info.ok ? '' : 'neg'}">${warn}</div>` : ''}</div>
+      ${warn ? `<div class="${info.ok ? '' : 'neg'}" style="font-size:13px;color:${info.ok ? 'var(--fg)' : ''}">${warn}</div>` : ''}</div>
     <div class="row">
-      <button class="btn ${draft.via ? 'on' : ''}" data-act="via" aria-pressed="${draft.via}">経由点</button>
+      <button class="btn ${draft.via ? 'on' : ''}" data-act="via" aria-pressed="${draft.via}">通り道を指定</button>
       ${L ? `<button class="btn" data-act="flip">${draft.prepend ? '終点側に延ばす' : '始点側に延ばす'}</button>` : ''}
       <button class="btn" data-act="undo" ${draft.undo.length ? '' : 'disabled'}>1つ戻す</button>
       <button class="btn" data-act="cancelBuild">やめる</button>
@@ -1091,6 +1113,7 @@ function commitBuild() {
   draft = null;
   renderBuildBar();
   $('#panel').classList.remove('collapsed');
+  tutLayout();
   rebuildNet();
   checkGoals();
   syncTabs();
@@ -1152,27 +1175,13 @@ function buildBase() {
   const g = base.getContext('2d');
   g.scale(sc, sc);
   g.fillStyle = COL.land; g.fillRect(0, 0, W, H);
-  const rand = rng(SEED + 7);
   const tc = { res: COL['block-res'], com: COL['block-com'], off: COL['block-off'], ind: COL['block-ind'], park: COL['block-park'] };
-  MAP.blocks.forEach((b, i) => {
+  // 街区は種類ごとの色でぬるだけにして、地図を読みやすくする
+  MAP.blocks.forEach(b => {
     g.fillStyle = tc[b.type];
-    g.globalAlpha = 0.55;
-    g.fillRect(b.x - 42, b.y - 42, 84, 84);
-    g.globalAlpha = 1;
-    // 建物：人口と職場が多いほど密に、高い建物ほど明るく
-    const dens = (S.pop[i][0] + S.pop[i][1]) / 6000;
-    const n = b.type === 'park' ? 0 : Math.round(4 + dens * 20);
-    for (let k = 0; k < n; k++) {
-      const w = 6 + rand() * (b.type === 'ind' ? 22 : 12), h = 6 + rand() * (b.type === 'ind' ? 16 : 12);
-      const x = b.x - 38 + rand() * (76 - w), y = b.y - 38 + rand() * (76 - h);
-      const lum = b.type === 'off' ? 0.55 + rand() * 0.3 : 0.25 + rand() * 0.25 + dens * 0.1;
-      g.fillStyle = `rgba(210,222,236,${Math.min(0.85, lum)})`;
-      g.fillRect(x, y, w, h);
-    }
-    if (b.type === 'park') {
-      g.fillStyle = 'rgba(90,160,100,0.5)';
-      for (let k = 0; k < 14; k++) { g.beginPath(); g.arc(b.x - 34 + rand() * 68, b.y - 34 + rand() * 68, 3 + rand() * 4, 0, 7); g.fill(); }
-    }
+    g.beginPath();
+    if (g.roundRect) g.roundRect(b.x - 44, b.y - 44, 88, 88, 6); else g.rect(b.x - 44, b.y - 44, 88, 88);
+    g.fill();
   });
   g.fillStyle = COL.water;
   g.beginPath(); BAY.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.fill();
@@ -1180,10 +1189,12 @@ function buildBase() {
   g.beginPath(); RIVER.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke();
   g.fillStyle = 'rgba(160,190,220,0.35)'; g.font = '14px sans-serif'; g.textAlign = 'center';
   g.fillText('みなと川', 640, 250); g.fillText('みなと湾', 1450, 900);
-  MAP.exts.forEach(e => {
-    g.fillStyle = 'rgba(255,181,71,0.12)';
-    g.beginPath(); g.arc(e.x, e.y, 90, 0, 7); g.fill();
-  });
+}
+// 地区名を書く位置（地区に属する街区の中心）
+function districtLabels() {
+  const acc = {};
+  MAP.blocks.forEach(b => { const a = (acc[b.district] = acc[b.district] || { x: 0, y: 0, n: 0 }); a.x += b.x; a.y += b.y; a.n++; });
+  return Object.entries(acc).map(([name, a]) => ({ name, x: a.x / a.n, y: a.y / a.n }));
 }
 function resize() {
   const r = cv.getBoundingClientRect();
@@ -1232,7 +1243,7 @@ function laneOffset(L, k) {
   const a = L.stops[k], b = L.stops[k + 1];
   const arr = laneMap[segKeyStops(a, b)] || [L.id];
   const n = arr.length, idx = Math.max(0, arr.indexOf(L.id));
-  return (idx - (n - 1) / 2) * 6 / view.s * (a < b ? 1 : -1) + (MODES[L.mode].road ? 5 / view.s * (a < b ? 1 : -1) : 0);
+  return (idx - (n - 1) / 2) * 7 / view.s * (a < b ? 1 : -1);
 }
 function offsetPts(pts, off) {
   if (!off) return pts;
@@ -1242,13 +1253,14 @@ function offsetPts(pts, off) {
     return { x: p.x - dy / len * off, y: p.y + dx / len * off };
   });
 }
-function strokePath(pts, mode, color, alpha) {
+function strokePath(pts, mode, color, alpha, extra) {
   const px = 1 / view.s;
   ctx.globalAlpha = alpha;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   ctx.beginPath();
   pts.forEach((p, j) => (j ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-  ctx.strokeStyle = color; ctx.lineWidth = MODES[mode].w * px;
-  ctx.setLineDash(mode === 'metro' ? [10 * px, 4 * px] : mode === 'ferry' ? [3 * px, 5 * px] : []);
+  ctx.strokeStyle = color; ctx.lineWidth = (MODES[mode].w + (extra || 0)) * px;
+  ctx.setLineDash(extra ? [] : mode === 'metro' ? [10 * px, 4 * px] : mode === 'ferry' ? [3 * px, 5 * px] : []);
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.globalAlpha = 1;
@@ -1283,22 +1295,22 @@ function draw() {
   }
   // 道路
   ctx.lineCap = 'round';
-  const dim = layer === 'traffic' ? 1 : 0.9;
+  const dim = layer === 'traffic' ? 1 : 0.7;
   MAP.links.forEach((l, k) => {
     const A = MAP.nodes[l.a], B = MAP.nodes[l.b];
     const vc = S.ema[k] / l.cap;
     ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y);
     ctx.strokeStyle = layer === 'traffic' ? jamColor(vc) : (l.art ? COL['road-art'] : COL.road);
     ctx.globalAlpha = dim;
-    ctx.lineWidth = (l.art ? 9 : 5) * (layer === 'traffic' ? 0.9 : 1);
+    ctx.lineWidth = layer === 'traffic' ? (l.art ? 9 : 6) : (l.art ? 7 : 4);
     ctx.stroke();
-    if (l.bridge && layer !== 'traffic') { ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = (l.art ? 13 : 8); ctx.globalAlpha = 0.6; ctx.stroke(); }
+    if (l.bridge && layer !== 'traffic') { ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 11; ctx.globalAlpha = 0.6; ctx.stroke(); }
     ctx.globalAlpha = 1;
     if (S.busLane[k]) { ctx.strokeStyle = 'rgba(214,92,64,0.9)'; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke(); }
     if (S.tram[k]) { ctx.strokeStyle = 'rgba(230,236,245,0.7)'; ctx.lineWidth = 1; ctx.setLineDash([2, 2]); ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke(); ctx.setLineDash([]); }
   });
-  // 走っている車（交通量に応じた数の点）
-  if (view.s > 0.35) {
+  // 走っている車（渋滞表示のときだけ、交通量に応じた数の点）
+  if (layer === 'traffic' && view.s > 0.35) {
     ctx.fillStyle = layer === 'traffic' ? 'rgba(255,255,255,0.8)' : 'rgba(255,230,190,0.75)';
     MAP.links.forEach((l, k) => {
       const n = Math.min(10, Math.round(S.ema[k] / 140));
@@ -1315,21 +1327,46 @@ function draw() {
       }
     });
   }
+  // 地区名と都心
+  const font = (sz, w) => `${w || 500} ${sz * px}px ${getComputedStyle(document.body).fontFamily}`;
+  if (layer !== 'traffic') {
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    DLABELS.forEach(d => {
+      ctx.font = font(d.name === '中央' ? 17 : 15, 700);
+      ctx.fillStyle = d.name === '中央' ? 'rgba(255,214,150,0.55)' : 'rgba(230,236,245,0.32)';
+      ctx.fillText(d.name === '中央' ? '中央（都心）' : d.name, d.x, d.y);
+    });
+  }
+  // 乗り場がなくて困っている場所
+  if (!draft || MODES[draft.mode].road) NEEDS.forEach((b, n) => {
+    const r = (10 + 2 * Math.sin(animT * 4 + n)) * px;
+    ctx.fillStyle = 'rgba(255,98,98,0.9)';
+    ctx.beginPath(); ctx.arc(b.x, b.y - 10 * px, r, 0, 7); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = font(13, 700); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('!', b.x, b.y - 10 * px);
+    if (view.s > 0.4) {
+      ctx.font = font(11, 700); ctx.lineWidth = 3 * px; ctx.strokeStyle = 'rgba(8,12,20,0.9)';
+      ctx.strokeText('乗り場がない', b.x, b.y + 12 * px); ctx.fillStyle = '#ffd0d0'; ctx.fillText('乗り場がない', b.x, b.y + 12 * px);
+    }
+  });
   // 路線
   S.lines.forEach(L => {
     const dimL = selLine && selLine !== L.id && tab === 'lines' ? 0.3 : 1;
-    L._segs.forEach((seg, k) => strokePath(offsetPts(seg.pts, laneOffset(L, k)), L.mode, L.color, dimL));
+    L._segs.forEach((seg, k) => {
+      const pts = offsetPts(seg.pts, laneOffset(L, k));
+      strokePath(pts, L.mode, 'rgba(8,12,20,0.9)', dimL, 3);
+      strokePath(pts, L.mode, L.color, dimL);
+    });
   });
   if (draft) drawDraft();
   // 停留所・駅
-  const font = (sz, w) => `${w || 500} ${sz * px}px ${getComputedStyle(document.body).fontFamily}`;
   S.stops.forEach((s, i) => {
     if (s.removed) return;
     const modes = stopModes(s);
     const served = S.lines.some(L => L.stops.includes(i));
     if (!served && !s.planned) return;
     const big = modes.some(m => !MODES[m].road);
-    const r = (big ? 7 : 4.5) * px;
+    const r = (big ? 8 : 5.5) * px;
     if (sel && sel.kind === 'stop' && sel.id === i) { ctx.strokeStyle = COL.led; ctx.lineWidth = 2 * px; ctx.beginPath(); ctx.arc(s.x, s.y, r + 6 * px, 0, 7); ctx.stroke(); }
     const ratio = served ? Math.min(1, waitTotal(i) / stopCap(i)) : 0;
     if (ratio > 0.03) {
@@ -1343,13 +1380,23 @@ function draw() {
     ctx.beginPath();
     if (big) ctx.arc(s.x, s.y, r, 0, 7); else ctx.rect(s.x - r, s.y - r, r * 2, r * 2);
     ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
-    if (view.s > 0.7 || big) {
-      ctx.font = font(big ? 11 : 10, big ? 700 : 500);
+    if (view.s > 0.55 || big) {
+      ctx.font = font(big ? 12 : 11, big ? 700 : 500);
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       ctx.lineWidth = 3 * px; ctx.strokeStyle = 'rgba(8,12,20,0.85)';
       ctx.strokeText(s.name, s.x, s.y + r + 3 * px);
       ctx.fillStyle = COL.fg; ctx.fillText(s.name, s.x, s.y + r + 3 * px);
     }
+  });
+  // チュートリアルで光らせる交差点
+  tutNodes().forEach((n, k) => {
+    const N = MAP.nodes[n];
+    const r = (12 + 5 * Math.sin(animT * 5 + k)) * px;
+    ctx.strokeStyle = COL.led; ctx.lineWidth = 3 * px;
+    ctx.beginPath(); ctx.arc(N.x, N.y, r, 0, 7); ctx.stroke();
+    ctx.font = font(12, 700); ctx.fillStyle = COL.led; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.lineWidth = 3 * px; ctx.strokeStyle = 'rgba(8,12,20,0.9)';
+    ctx.strokeText(String(k + 1), N.x, N.y - r - 2 * px); ctx.fillText(String(k + 1), N.x, N.y - r - 2 * px);
   });
   // 車両
   S.vehicles.forEach(v => {
@@ -1395,16 +1442,19 @@ function drawDraft() {
     ctx.strokeStyle = COL.led; ctx.lineWidth = 2 * px; ctx.setLineDash([5 * px, 5 * px]); ctx.stroke(); ctx.setLineDash([]);
     draft.pending.forEach(p => { ctx.fillStyle = '#0c1219'; ctx.fillRect(p.x - 4 * px, p.y - 4 * px, 8 * px, 8 * px); ctx.strokeStyle = COL.led; ctx.lineWidth = 2 * px; ctx.strokeRect(p.x - 4 * px, p.y - 4 * px, 8 * px, 8 * px); });
   }
-  if (M.road && view.s > 0.3) {
-    ctx.fillStyle = 'rgba(255,181,71,0.35)';
-    MAP.nodes.forEach(n => ctx.fillRect(n.x - 3 * px, n.y - 3 * px, 6 * px, 6 * px));
+  // タップできる交差点をはっきり見せる
+  if (M.road) {
+    MAP.nodes.forEach(n => {
+      ctx.fillStyle = 'rgba(12,18,25,0.9)'; ctx.strokeStyle = COL.led; ctx.lineWidth = 1.5 * px;
+      ctx.beginPath(); ctx.arc(n.x, n.y, 4.5 * px, 0, 7); ctx.fill(); ctx.stroke();
+    });
   }
 }
 function renderLegend() {
   const el = $('#legend');
   if (layer === 'traffic') { el.hidden = false; el.innerHTML = `<span><i style="background:${COL.good}"></i>流れている</span><span><i style="background:${COL.warn}"></i>混雑</span><span><i style="background:${COL.bad}"></i>渋滞</span>`; }
   else if (layer === 'people') { el.hidden = false; el.innerHTML = `<span><i style="background:rgba(79,209,139,0.9)"></i>住む人（左半分）</span><span><i style="background:rgba(92,124,250,0.9)"></i>働く人（右半分）</span>`; }
-  else el.hidden = true;
+  else { el.hidden = false; el.innerHTML = `<span><i style="background:${COL['block-res']}"></i>住宅地</span><span><i style="background:${COL['block-com']}"></i>商業地</span><span><i style="background:${COL['block-off']}"></i>オフィス街</span><span><i style="background:${COL['block-ind']}"></i>工業地</span><span><i style="background:#ff6262"></i>乗り場がない場所</span>`; }
 }
 
 // ===== 入力 =====
@@ -1443,7 +1493,7 @@ $('#zFit').onclick = fitView;
 $('#layers').addEventListener('click', e => {
   const b = e.target.closest('button');
   if (!b) return;
-  layer = b.dataset.layer; syncLayers();
+  layer = b.dataset.layer; syncLayers(); tutTick();
 });
 function syncLayers() { document.querySelectorAll('#layers button').forEach(b => b.classList.toggle('on', b.dataset.layer === layer)); renderLegend(); }
 
@@ -1518,6 +1568,11 @@ document.addEventListener('click', e => {
     case 'save': save(); toast('保存しました'); break;
     case 'reset': try { localStorage.removeItem(SAVE_KEY); } catch (err) { /* 何もしない */ } newRun(); return;
     case 'help': showHelp(); return;
+    case 'tutNext': S.tut++; if (S.tut >= TUT.length) S.tut = -1; tutLayout(); renderGuide(); return;
+    case 'tutSkip': S.tut = -1; tutLayout(); renderGuide(); return;
+    case 'tutAgain': S.tut = 1; S.guideHidden = false; tutLayout(); renderGuide(); break;
+    case 'hideGuide': S.guideHidden = true; renderGuide(); return;
+    case 'showGuide': S.guideHidden = false; renderGuide(); break;
     case 'closeOverlay': $('#overlay').hidden = true; return;
   }
   renderPanel();
@@ -1537,6 +1592,56 @@ function lineStats(L) {
   const vs = S.vehicles.filter(v => v.line === L.id), M = MODES[L.mode];
   return { n: vs.length, load: vs.length ? vs.reduce((a, v) => a + v.load, 0) / (vs.length * M.cap) : 0, up: vs.length * M.vehUp };
 }
+// ===== チュートリアル =====
+const TUT = [
+  { title: 'みなと市へようこそ', text: 'みなと市は朝と夕方の通勤ラッシュで道路が渋滞しています。あなたの仕事は、バスや電車を走らせて、車の代わりに使ってもらうことです。', next: true },
+  { title: '渋滞を見てみよう', text: '地図の左下にある「渋滞」ボタンを押してください。赤い道路ほど混んでいます。', hl: () => '#layers [data-layer=traffic]', done: () => layer === 'traffic' },
+  { title: 'バス路線を作ろう', text: 'パネルの「建設」タブを開いて、「バス」の「作る」を押してください。', hl: () => (tab === 'build' ? '[data-act=build][data-mode=bus]' : '#tabs [data-tab=build]'), done: () => draft && draft.mode === 'bus' },
+  { title: '停留所を置こう', text: '地図で光っている交差点を 1 → 2 → 3 の順にタップしてください。住宅地から都心のオフィス街へ向かうバスになります。', done: () => draft && TUT_NODES.every(n => draft.stops.some(s => S.stops[s].node === n)) },
+  { title: '開業しよう', text: '下の「開業する」を押すと、バスが2台走り始めます。', hl: () => '[data-act=commit]', done: () => S.lines.length > 0 },
+  { title: '時間を進めよう', text: '画面上の「10×」を押して早送りし、朝の通勤ラッシュ（7〜9時）にバスに人が乗る様子を見てみましょう。', hl: () => '#speedBtns [data-speed="10"]', done: () => S.lines.some(L => (L.rides || 0) + (L.ridesY || 0) >= 300) },
+  { title: 'バスを増やそう', text: '停留所の周りの輪は、待っている人の多さです。「路線」タブで路線を選び「車両を追加」を押すと、待ち時間が減って乗る人が増えます。', hl: () => (tab !== 'lines' ? '#tabs [data-tab=lines]' : selLine ? '[data-act=addVeh]' : '.item'), done: () => S.lines.some(L => S.vehicles.filter(v => v.line === L.id).length >= 3) },
+  { title: 'あとは自由に', text: '赤い「!」の印は、乗り場がなくて困っている人が多い場所です。そこへ路線を伸ばしたり新しく作ったりしましょう。目標を達成すると、路面電車や地下鉄も作れるようになります。', next: true },
+];
+function tutNodes() { return S && S.tut === 3 && draft && draft.mode === 'bus' ? TUT_NODES.filter(n => !draft.stops.some(s => S.stops[s].node === n)) : []; }
+function tutTick() {
+  if (S.tut < 0 || S.tut >= TUT.length) return;
+  // 途中で作るのをやめたら、バスを作る手順に戻る
+  if ((S.tut === 3 || S.tut === 4) && !draft && !S.lines.length) S.tut = 2;
+  const st = TUT[S.tut];
+  if (st.done && st.done()) { S.tut++; toast('OK！'); tutLayout(); renderGuide(); }
+}
+// スマホではパネルを使う手順のときだけパネルを開き、それ以外は地図を広く見せる
+function tutLayout() {
+  if (window.innerWidth >= 900) return;
+  const inTut = S.tut >= 0 && S.tut < TUT.length;
+  if (draft || tool) return;
+  $('#panel').classList.toggle('collapsed', inTut && ![2, 6].includes(S.tut));
+}
+function nextGoal() { return GOALS.find(g => !S.goals[g.id]); }
+function renderGuide() {
+  const el = $('#guide');
+  if (S.tut >= 0 && S.tut < TUT.length) {
+    const st = TUT[S.tut];
+    el.hidden = false; el.className = '';
+    el.innerHTML = `<span class="step">チュートリアル ${S.tut + 1} / ${TUT.length}</span><span class="ttl">${st.title}</span><span>${st.text}</span>
+      <div class="row">${S.tut < TUT.length - 1 ? '<button class="btn" data-act="tutSkip">飛ばす</button>' : ''}${st.next ? `<button class="btn primary" data-act="tutNext">${S.tut === TUT.length - 1 ? 'はじめる' : '次へ'}</button>` : ''}</div>`;
+  } else if (!S.guideHidden && !draft && !tool) {
+    const g = nextGoal();
+    el.hidden = false; el.className = 'mini';
+    el.innerHTML = g ? `<span class="step">次の目標　報酬 ${yen(g.reward)}</span><span class="ttl">${g.label}</span><span class="hint">${g.hint}</span><div class="row"><button class="btn" data-act="hideGuide">閉じる</button></div>`
+      : '<span class="ttl">すべての目標を達成しました！</span><div class="row"><button class="btn" data-act="hideGuide">閉じる</button></div>';
+  } else el.hidden = true;
+  applyHighlight();
+}
+function applyHighlight() {
+  document.querySelectorAll('.pulse').forEach(e => e.classList.remove('pulse'));
+  if (S.tut < 0 || S.tut >= TUT.length || !TUT[S.tut].hl) return;
+  const sel = TUT[S.tut].hl();
+  const el = sel && document.querySelector(sel);
+  if (el) el.classList.add('pulse');
+}
+
 function renderPanel() {
   dirtyPanel = false;
   const body = $('#panelBody');
@@ -1550,6 +1655,7 @@ function renderPanel() {
   body.innerHTML = h;
   if (tab === 'traffic') drawChart('chartShare', S.hist.map(d => d.share * 100), COL.good, v => v.toFixed(0) + '%');
   if (tab === 'money') drawMoneyChart();
+  applyHighlight();
 }
 function linesHtml() {
   const L = selLine && lineById(selLine);
@@ -1595,11 +1701,13 @@ function linesHtml() {
   return h + '</div>';
 }
 function buildHtml() {
-  let h = `<p class="hint">交通手段を選んで地図をタップします。バスと路面電車は交差点をタップすると停留所になり、道路に沿って自動で経路が引かれます。地下鉄・鉄道・水上バスは好きな場所に駅を置けます。「経由点」で通り道を指定できます。</p><div class="cards">`;
+  let h = `<p class="hint">「作る」を押してから地図をタップします。バスと路面電車は交差点をタップすると停留所になり、道路に沿って線が自動で引かれます。地下鉄・郊外鉄道・水上バスは好きな場所に駅を置けます。</p><div class="cards">`;
   Object.values(MODES).forEach(M => {
-    h += `<div class="card2"><div class="top"><h3>${M.name}</h3><button class="btn primary" data-act="build" data-mode="${M.key}">作る</button></div>
+    const ok = unlocked(M.key);
+    const cond = ok ? '' : `<br><b>🔒 目標「${GOALS.find(g => g.id === UNLOCK[M.key]).label}」を達成すると作れます</b>`;
+    h += `<div class="card2 ${ok ? '' : 'lock'}"><div class="top"><h3>${M.name}</h3><button class="btn primary" data-act="build" data-mode="${M.key}" ${ok ? '' : 'disabled'}>作る</button></div>
       <div class="spec">${MODE_NOTE[M.key]}<br>定員 ${M.cap}人・時速${Math.round(M.speed * 0.6)}km・運賃 ${M.fare}円<br>
-      ${M.key === 'bus' ? '停留所' : '駅'} ${yen(M.stopCost)}${M.segCost ? `・線路 ${yen(M.segCost * 100)}/km` : ''}・車両 ${yen(M.vehCost)}（維持 ${yen(M.vehUp)}/日）</div></div>`;
+      ${M.key === 'bus' ? '停留所' : '駅'} ${yen(M.stopCost)}${M.segCost ? `・線路 ${yen(M.segCost * 100)}/km` : ''}・車両 ${yen(M.vehCost)}（維持 ${yen(M.vehUp)}/日）${cond}</div></div>`;
   });
   h += `<div class="card2"><div class="top"><h3>バス専用レーン</h3><button class="btn" data-act="busLane">工事する</button></div>
     <div class="spec">道路の区間ごとに作れます。バスと路面電車がその区間で渋滞に巻き込まれなくなります。そのかわり車の通れる量が3割減ります。${yen(BUS_LANE_COST * 100)}/km</div></div></div>`;
@@ -1645,7 +1753,7 @@ function trafficHtml() {
   const worst = MAP.links.map((l, k) => [k, S.ema[k] / l.cap]).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const satC = S.sat >= 60 ? 'pos' : S.sat >= 40 ? 'wrn' : 'neg';
   return `<div class="tiles">
-      ${tile('公共交通の分担率', pct(share), `昨日 ${pct(y.share)}`)}
+      ${tile('公共交通の利用率', pct(share), `昨日 ${pct(y.share)}`)}
       ${tile('渋滞度', jamNow, `昨日 ${y.jam}（0〜100、低いほどよい）`, jamNow > 60 ? 'neg' : jamNow > 35 ? 'wrn' : 'pos')}
       ${tile('平均通勤時間', (t.trips ? t.timeSum / t.trips : y.avgT).toFixed(1) + '分', `昨日 ${y.avgT.toFixed(1)}分`)}
       ${tile('市民の満足度', Math.round(S.sat), '通勤時間と移動できなかった人で決まる', satC)}
@@ -1653,7 +1761,7 @@ function trafficHtml() {
     <dl class="kv"><dt>今日の移動</dt><dd class="num">${man(t.trips)}回</dd><dt>公共交通</dt><dd class="num">${man(t.transit)}回</dd><dt>車</dt><dd class="num">${man(t.car)}回</dd>
     <dt>移動できなかった人</dt><dd class="num ${t.stranded + t.lost > 0 ? 'neg' : ''}">${man(t.stranded + t.lost)}人</dd></dl>
     <p class="hint">車を持たない人（約30%）は、近くに乗り場がないと移動できません。駅があふれて帰った人もここに入ります。</p>
-    <div><span class="hint">公共交通の分担率の推移（日ごと）</span><canvas id="chartShare" class="chart"></canvas></div>
+    <div><span class="hint">公共交通の利用率の推移（日ごと）</span><canvas id="chartShare" class="chart"></canvas></div>
     <div class="list"><span class="hint">いま一番混んでいる道路</span>${worst.map(([k, vc]) => `<div class="row" style="justify-content:space-between"><span>${MAP.links[k].bridge ? '橋' : MAP.links[k].art ? '幹線道路' : '生活道路'}（${MAP.blocks.reduce((a, c) => (hyp(c.x, c.y, MAP.nodes[MAP.links[k].a].x, MAP.nodes[MAP.links[k].a].y) < hyp(a.x, a.y, MAP.nodes[MAP.links[k].a].x, MAP.nodes[MAP.links[k].a].y) ? c : a)).district}付近）</span><span class="num ${vc > 0.9 ? 'neg' : 'wrn'}">${Math.round(vc * 100)}%</span></div>`).join('')}</div>`;
 }
 function moneyHtml() {
@@ -1666,7 +1774,7 @@ function moneyHtml() {
       <dt>維持費の見込み</dt><dd class="num neg">${yen(up)}/日</dd>
       <dt>今日の建設費など</dt><dd class="num neg">${yen(t.cost)}</dd>
     </dl>
-    <p class="hint">市の補助金は毎日、公共交通の分担率が高く渋滞が少ないほど多くなります。目標を達成すると、さらに一時金が出ます。</p>
+    <p class="hint">市の補助金は毎日、公共交通の利用率が高く渋滞が少ないほど多くなります。目標を達成すると、さらに一時金が出ます。</p>
     <div><span class="hint">日ごとの収支（緑：運賃＋補助金　赤：支出）</span><canvas id="chartMoney" class="chart"></canvas></div>
     <div class="row"><button class="btn" data-act="borrow" ${S.loan >= 5e9 ? 'disabled' : ''}>10億円借りる</button><button class="btn" data-act="repay" ${S.loan >= 1e9 && S.money >= 1e9 ? '' : 'disabled'}>10億円返す</button></div>
     <p class="hint">借入は最大50億円、日利0.02%。資金がマイナスのまま7日続くと交通局は解散です。</p>`;
@@ -1674,9 +1782,9 @@ function moneyHtml() {
 function logHtml() {
   return `<div class="list">${GOALS.map(g => {
       const done = !!S.goals[g.id];
-      return `<div class="goal ${done ? 'done' : ''}"><div class="top"><span>${done ? '✓' : '○'} ${g.label}</span><span class="num">${yen(g.reward)}</span></div></div>`;
+      return `<div class="goal ${done ? 'done' : ''}"><div class="top"><span>${done ? '✓' : '○'} ${g.label}</span><span class="num">${yen(g.reward)}</span></div>${done ? '' : `<span class="hint">${g.hint}</span>`}</div>`;
     }).join('')}</div>
-    <div class="row"><button class="btn" data-act="help">遊び方</button><button class="btn" data-act="save">保存</button>
+    <div class="row"><button class="btn" data-act="tutAgain">チュートリアルをもう一度</button><button class="btn" data-act="showGuide">次の目標を地図に表示</button><button class="btn" data-act="help">遊び方</button><button class="btn" data-act="save">保存</button>
       <button class="btn danger" data-act="reset">${pendingConfirm === 'reset' ? 'もう一度押すと最初から' : '最初からやり直す'}</button></div>
     <h3>記録</h3><ul class="logList">${S.log.map(l => `<li><span class="d">${dateStr(l.t)}</span><span>${l.msg}</span></li>`).join('')}</ul>`;
 }
@@ -1727,7 +1835,10 @@ function updateHud() {
   const t = S.today;
   const share = t.transit + t.car > 50 ? t.transit / (t.transit + t.car + t.stranded) : S.yday.share;
   $('#hShare').textContent = pct(share);
-  $('#hJam').textContent = t.jamN ? Math.round(t.jamSum / t.jamN * 100) : (S.yday.jam || '—');
+  const jam = t.jamN ? Math.round(t.jamSum / t.jamN * 100) : S.yday.jam;
+  const hj = $('#hJam');
+  hj.textContent = !jam ? '—' : jam < 30 ? '空いている' : jam < 50 ? '混雑' : '大渋滞';
+  hj.classList.toggle('neg', jam >= 50);
 }
 
 // ===== オーバーレイ =====
@@ -1740,7 +1851,7 @@ function showHelp() {
       <li>「建設」タブで交通手段を選び、地図をタップして停留所や駅を置きます。</li>
       <li>市民は「車で行く時間（渋滞と駐車場探しを含む）」と「公共交通で行く時間（歩き・待ち・乗車・乗り換え）」を比べて選びます。速くて本数が多い路線ほど乗ってもらえます。</li>
       <li>バスは渋滞に巻き込まれます。専用レーンを作るか、地下鉄など渋滞と無関係な交通手段を使いましょう。</li>
-      <li>運賃と市の補助金が収入です。補助金は分担率が高く渋滞が少ないほど増えます。</li>
+      <li>運賃と市の補助金が収入です。補助金は利用率が高く渋滞が少ないほど増えます。</li>
     </ol>
     <p class="hint">地図はドラッグで移動、ホイールかピンチで拡大。表示中のタブをもう一度押すとパネルを畳めます。進行は毎日自動保存されます。</p>
     <button class="btn primary" data-act="closeOverlay">はじめる</button>`);
@@ -1748,7 +1859,7 @@ function showHelp() {
 function showGameOver() {
   speed = 0; syncSpeed();
   overlay(`<h2>交通局は解散しました</h2><p>資金不足が7日続きました。</p>
-    <dl class="kv"><dt>期間</dt><dd>${dateStr(0)} 〜 ${dateStr(S.t)}</dd><dt>最後の分担率</dt><dd>${pct(S.yday.share)}</dd></dl>
+    <dl class="kv"><dt>期間</dt><dd>${dateStr(0)} 〜 ${dateStr(S.t)}</dd><dt>最後の利用率</dt><dd>${pct(S.yday.share)}</dd></dl>
     <button class="btn primary" data-act="reset">最初からやり直す</button>`);
   pendingConfirm = 'reset';
 }
@@ -1774,8 +1885,12 @@ function initGame() {
   computeLanes();
   hourlyTrips(Math.floor(S.t / 60) % 24);
   tab = 'lines';
+  DLABELS = districtLabels();
+  // チュートリアルで使う、西の住宅地から都心へ向かう交差点
+  TUT_NODES = [[150, 450], [350, 450], [550, 450]].map(([x, y]) => nearestNode({ x, y }, 1e9));
+  if (S.tut === undefined) S.tut = S.lines.length ? -1 : 1;
   $('#panel').classList.remove('collapsed');
-  fitView(); renderBuildBar(); syncSpeed(); syncLayers(); syncTabs();
+  fitView(); renderBuildBar(); syncSpeed(); syncLayers(); syncTabs(); tutLayout(); renderGuide();
 }
 function warmUp() {
   // 最初の交通量を落ち着かせるため、朝のラッシュまでを数回まわしておく
@@ -1789,8 +1904,11 @@ function newRun() {
   initGame();
   warmUp();
   log('みなと市交通局が発足しました。');
+  S.tut = 0;
+  tutLayout();
+  renderGuide();
   save();
-  showHelp();
+  $('#overlay').hidden = true;
 }
 let looping = false;
 function start(data) {
@@ -1800,7 +1918,7 @@ function start(data) {
   const hot = data && data.state;
   S = (hot && hot.v === 1 ? hot : null) || load();
   if (!S) { newRun(); }
-  else { initGame(); if (!hot) showHelp(); }
+  else initGame();
   if (!looping) { looping = true; requestAnimationFrame(frame); }
 }
 let last = performance.now(), panelTimer = 0, simAcc = 0;
@@ -1820,7 +1938,8 @@ function frame(now) {
   updateHud();
   panelTimer += real;
   const a = document.activeElement;
-  if ((dirtyPanel || panelTimer > 1) && !(a && a.tagName === 'INPUT')) { panelTimer = 0; renderPanel(); if (draft) renderBuildBar(); }
+  if ((dirtyPanel || panelTimer > 1) && !(a && a.tagName === 'INPUT')) { panelTimer = 0; renderPanel(); if (draft) renderBuildBar(); renderGuide(); }
+  tutTick();
   requestAnimationFrame(frame);
 }
 new ResizeObserver(() => {

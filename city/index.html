@@ -1,0 +1,1839 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>みなと市交通局</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+/* Layout: 交通局の指令盤。上に計器帯、中央に都市の地図、下（広い画面では右）に操作パネル */
+:root {
+  --bg: #0c1219;
+  --board: #121b26;
+  --panel: #141e2b;
+  --rule: #263548;
+  --fg: #e5ecf3;
+  --muted: #8b9aac;
+  --led: #ffb547;
+  --good: #4fd18b;
+  --warn: #f2c94c;
+  --bad: #ff6262;
+  --land: #1b2632;
+  --block-res: #2c4a3a;
+  --block-com: #4a3f2a;
+  --block-off: #2f3f5c;
+  --block-ind: #4a3346;
+  --block-park: #22412b;
+  --water: #0b1a2c;
+  --road: #4a5868;
+  --road-art: #6b7b8c;
+  --font-led: "DotGothic16", "Osaka-Mono", "MS Gothic", monospace;
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 14px;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+#app {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "hud" "map" "panel";
+}
+@media (min-width: 900px) {
+  #app {
+    grid-template-columns: minmax(0, 1fr) 390px;
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "hud hud" "map panel";
+  }
+}
+#hud {
+  grid-area: hud;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  padding-block: 8px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--panel);
+  border-bottom: 1px solid var(--rule);
+}
+.brand { font-family: var(--font-led); font-size: 18px; letter-spacing: 0.08em; color: var(--led); margin-right: auto; }
+.brand small { color: var(--muted); font-size: 11px; margin-left: 6px; letter-spacing: 0.15em; }
+.meter { display: flex; flex-direction: column; line-height: 1.15; }
+.meter .lbl { font-size: 10px; color: var(--muted); letter-spacing: 0.12em; }
+.meter .val { font-family: var(--font-led); font-size: 16px; color: var(--led); font-variant-numeric: tabular-nums; text-shadow: 0 0 8px rgba(255, 181, 71, 0.35); }
+.meter .val.neg { color: var(--bad); }
+.speed { display: flex; gap: 4px; }
+.speed button { font-family: var(--font-led); min-width: 38px; padding: 5px 6px; border-radius: 4px; border: 1px solid var(--rule); background: var(--board); color: var(--muted); cursor: pointer; }
+.speed button.on { color: var(--bg); background: var(--led); border-color: var(--led); }
+
+#mapWrap { grid-area: map; position: relative; overflow: hidden; background: var(--water); touch-action: none; }
+#map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.zoom { position: absolute; right: max(10px, env(safe-area-inset-right, 0px)); bottom: 10px; display: flex; flex-direction: column; gap: 4px; }
+.zoom button, .layers button { width: 36px; height: 36px; border-radius: 6px; border: 1px solid var(--rule); background: rgba(18, 27, 38, 0.92); color: var(--fg); font-size: 15px; cursor: pointer; }
+.layers { position: absolute; left: max(10px, env(safe-area-inset-left, 0px)); bottom: 10px; display: flex; gap: 4px; }
+.layers button { width: auto; padding: 0 10px; font-size: 12px; }
+.layers button.on { background: var(--led); color: var(--bg); border-color: var(--led); }
+#legend { position: absolute; left: max(10px, env(safe-area-inset-left, 0px)); bottom: 54px; padding: 6px 10px; border-radius: 6px; background: rgba(18, 27, 38, 0.9); border: 1px solid var(--rule); font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; max-width: calc(100% - 80px); }
+#legend i { display: inline-block; width: 14px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+#buildBar { position: absolute; top: 10px; left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px)); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; background: rgba(18, 27, 38, 0.96); border: 1px solid var(--led); border-radius: 8px; }
+@media (max-width: 899px) {
+  #buildBar { top: auto; bottom: 10px; right: calc(max(10px, env(safe-area-inset-right, 0px)) + 46px); }
+  #mapWrap.building .layers, #mapWrap.building #legend { display: none; }
+}
+@media (min-width: 900px) { #mapWrap.building #toast { top: auto; bottom: 60px; } }
+#buildBar .info { flex: 1 1 240px; min-width: 0; font-size: 13px; line-height: 1.5; }
+#buildBar .info b { color: var(--led); font-family: var(--font-led); font-weight: 400; }
+#buildBar .route { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+#toast { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); max-width: calc(100% - 80px); padding: 8px 14px; border-radius: 6px; background: rgba(10, 16, 24, 0.95); border: 1px solid var(--rule); font-size: 13px; pointer-events: none; transition: opacity 0.3s; }
+
+#panel { grid-area: panel; display: flex; flex-direction: column; min-height: 0; max-height: 44vh; background: var(--panel); border-top: 1px solid var(--rule); }
+@media (min-width: 900px) { #panel { max-height: none; border-top: 0; border-left: 1px solid var(--rule); } }
+#tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--rule); padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
+#tabs button { flex: 1 0 auto; padding: 10px 10px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+#tabs button.on { color: var(--fg); border-bottom-color: var(--led); }
+#panel.collapsed #panelBody { display: none; }
+#panel.collapsed #tabs button.on { border-bottom-color: transparent; }
+#panelBody { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-block: 12px 16px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 12px; }
+h3 { margin: 0; font-size: 15px; text-wrap: balance; }
+.hint { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 0; }
+.desc { margin: 0; font-size: 13px; line-height: 1.7; }
+.btn { font: inherit; font-size: 13px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--rule); background: var(--board); color: var(--fg); cursor: pointer; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--led); color: var(--bg); border-color: var(--led); font-weight: 700; }
+.btn.on { background: var(--led); color: var(--bg); border-color: var(--led); }
+.btn.danger { color: var(--bad); border-color: rgba(255, 98, 98, 0.5); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--led); outline-offset: 2px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.list { display: grid; gap: 6px; }
+.badge { display: inline-grid; place-items: center; min-width: 30px; height: 22px; padding: 0 4px; border-radius: 11px; border: 3px solid var(--c); background: var(--fg); color: #0c1219; font-family: var(--font-led); font-size: 12px; box-sizing: border-box; }
+.item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--board); cursor: pointer; color: inherit; font: inherit; text-align: left; width: 100%; }
+.item .nm { font-weight: 500; overflow-wrap: anywhere; }
+.item .sub { color: var(--muted); font-size: 12px; }
+.num { font-family: var(--font-led); font-variant-numeric: tabular-nums; }
+.pos { color: var(--good); }
+.neg { color: var(--bad); }
+.wrn { color: var(--warn); }
+dl.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 13px; }
+dl.kv dt { color: var(--muted); }
+dl.kv dd { margin: 0; overflow-wrap: anywhere; }
+.cards { display: grid; gap: 8px; }
+.card2 { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--board); }
+.card2 .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.card2 .spec { color: var(--muted); font-size: 12px; line-height: 1.6; }
+input[type=range] { width: 100%; accent-color: var(--led); }
+.bar { height: 6px; border-radius: 3px; background: var(--rule); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--led); }
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.tile { padding: 8px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--board); display: grid; gap: 2px; }
+.tile .lbl { font-size: 11px; color: var(--muted); }
+.tile .v { font-family: var(--font-led); font-size: 20px; }
+.tile .s { font-size: 11px; color: var(--muted); }
+.logList { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 12px; line-height: 1.5; }
+.logList li { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 8px; }
+.logList .d { color: var(--muted); font-family: var(--font-led); }
+.goal { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--board); }
+.goal.done { border-color: var(--good); }
+.goal .top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.goal.done .bar > i { background: var(--good); }
+canvas.chart { width: 100%; height: 120px; display: block; }
+.txt { flex: 1 1 140px; min-width: 0; font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--rule); background: var(--bg); color: var(--fg); }
+.swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--board); background: var(--c); cursor: pointer; padding: 0; }
+.swatch.on { border-color: var(--fg); box-shadow: 0 0 0 2px var(--c); }
+details summary { cursor: pointer; }
+#overlay { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(5, 9, 14, 0.8); z-index: 20; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+#overlay .card { max-width: 500px; max-height: 86vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 20px 22px; display: grid; gap: 12px; line-height: 1.7; }
+#overlay h2 { margin: 0; font-family: var(--font-led); font-weight: 400; color: var(--led); font-size: 22px; letter-spacing: 0.06em; }
+#overlay ol { margin: 0; padding-left: 1.3em; font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="hud">
+    <div class="brand">みなと市交通局<small>運行指令所</small></div>
+    <div class="meter"><span class="lbl">資金</span><span class="val" id="hMoney">—</span></div>
+    <div class="meter"><span class="lbl">日時</span><span class="val" id="hDate">—</span></div>
+    <div class="meter"><span class="lbl">公共交通の分担率</span><span class="val" id="hShare">—</span></div>
+    <div class="meter"><span class="lbl">渋滞</span><span class="val" id="hJam">—</span></div>
+    <div class="speed" id="speedBtns">
+      <button data-speed="0" aria-label="一時停止">II</button>
+      <button data-speed="1" aria-label="等速">1×</button>
+      <button data-speed="3" aria-label="3倍速">3×</button>
+      <button data-speed="10" aria-label="10倍速">10×</button>
+    </div>
+  </header>
+  <main id="mapWrap">
+    <canvas id="map"></canvas>
+    <div id="buildBar" hidden></div>
+    <div id="legend" hidden></div>
+    <div class="layers" id="layers">
+      <button data-layer="normal">地図</button>
+      <button data-layer="traffic">渋滞</button>
+      <button data-layer="people">人口と職場</button>
+    </div>
+    <div class="zoom">
+      <button id="zIn" aria-label="拡大">＋</button>
+      <button id="zOut" aria-label="縮小">−</button>
+      <button id="zFit" aria-label="全体表示">⤢</button>
+    </div>
+    <div id="toast" style="opacity:0"></div>
+  </main>
+  <aside id="panel">
+    <nav id="tabs">
+      <button data-tab="lines">路線</button>
+      <button data-tab="build">建設</button>
+      <button data-tab="info">詳細</button>
+      <button data-tab="traffic">交通</button>
+      <button data-tab="money">財務</button>
+      <button data-tab="log">目標</button>
+    </nav>
+    <div id="panelBody"></div>
+  </aside>
+</div>
+<div id="overlay" hidden></div>
+
+<script>
+'use strict';
+// ===== 基本データ =====
+// 地図の1単位＝10m。時間の単位は「分」
+const W = 1600, H = 1100;
+const SEED = 20260401;
+const SAVE_KEY = 'minato-city-transit-v1';
+const REAL_SEC_PER_HOUR = 10;     // 等速時、ゲーム内1時間＝10秒
+const WALK = 8;                   // 歩く速さ（単位/分）＝時速約5km
+const ACCESS_R = 90;              // 駅・停留所まで歩いてもよい距離（900m）
+const BASE_DATE = Date.UTC(2026, 3, 1);
+
+const MODES = {
+  bus:   { key: 'bus',   name: 'バス',     code: 'B', road: true,  speed: 45,  cap: 70,   stopCost: 5e5, segCost: 0,      vehCost: 3e6,  vehUp: 1e4,  trackUp: 0,   fare: 220, dwell: 0.5, stopCap: 160,  w: 3, unit: '台' },
+  tram:  { key: 'tram',  name: '路面電車', code: 'T', road: true,  speed: 55,  cap: 160,  stopCost: 3e6, segCost: 1.5e5,  vehCost: 2e7,  vehUp: 3e4,  trackUp: 150, fare: 200, dwell: 0.5, stopCap: 320,  w: 4, unit: '編成' },
+  metro: { key: 'metro', name: '地下鉄',   code: 'M', road: false, speed: 110, cap: 800,  stopCost: 8e7, segCost: 6e5,    vehCost: 6e7,  vehUp: 1.5e5, trackUp: 600, fare: 250, dwell: 0.6, stopCap: 1800, w: 5, unit: '編成' },
+  rail:  { key: 'rail',  name: '郊外鉄道', code: 'R', road: false, speed: 140, cap: 1000, stopCost: 5e7, segCost: 3e5,    vehCost: 6e7,  vehUp: 1.5e5, trackUp: 400, fare: 300, dwell: 1,   stopCap: 2200, w: 5, unit: '編成' },
+  ferry: { key: 'ferry', name: '水上バス', code: 'F', road: false, speed: 50,  cap: 150,  stopCost: 4e7, segCost: 0,      vehCost: 3e7,  vehUp: 4e4,  trackUp: 0,   fare: 400, dwell: 2,   stopCap: 320,  w: 3, unit: '隻' },
+};
+const MODE_NOTE = {
+  bus: '道路を走るので、渋滞するとそのまま遅れる。安く始められる。',
+  tram: '道路に線路を敷いて走る。渋滞の影響はバスの3割ほど。',
+  metro: '地下を走るので渋滞と無関係で速い。建設費はとても高い。',
+  rail: '地上の線路を高速で走る。地図の端の郊外とつなぐと、郊外からの通勤客を運べる。',
+  ferry: '川や湾の上を走る。橋の渋滞を避けられる。',
+};
+const BUS_LANE_COST = 2e4;   // 専用レーン 1単位（10m）あたり
+const LINE_COLORS = ['#e8423f', '#2f8fe0', '#f5a524', '#3cb371', '#a066d3', '#e86fa8', '#14b8c4', '#c9a227', '#8bc34a', '#ff7f50', '#5c7cfa', '#d9480f'];
+// 出勤（家→職場）と帰宅（職場→家）の時間帯の偏り。それぞれ1日の合計が1
+const OUTF = norm([0, 0, 0, 0, 0.2, 0.8, 3.5, 7, 6, 2.5, 1.2, 1, 1.2, 1, 0.9, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1]);
+const BACKF = norm([0.1, 0, 0, 0, 0, 0.1, 0.2, 0.3, 0.4, 0.6, 0.8, 1, 1.4, 1.1, 1, 1.2, 2, 4.5, 6, 4, 2.5, 1.6, 0.9, 0.4]);
+function norm(a) { const s = a.reduce((x, y) => x + y, 0); return a.map(v => v / s); }
+const TRIPS_PER_PERSON = 0.85;   // 1人1日あたりの出勤（と帰宅）の回数
+
+const BAY = [[1600, 560], [1500, 600], [1420, 700], [1360, 800], [1320, 900], [1180, 980], [1080, 1100], [1600, 1100]];
+const RIVER = [[540, 0], [600, 180], [700, 330], [820, 470], [960, 600], [1100, 720], [1260, 860], [1340, 910]];
+const RIVER_HALF = 17;
+const CBD = { x: 640, y: 380 };
+const EXTS = [
+  { name: '西郊外', x: 0, y: 450, res: 36000, jobs: 3000 },
+  { name: '北郊外', x: 950, y: 0, res: 28000, jobs: 2000 },
+  { name: '東郊外', x: 1600, y: 450, res: 30000, jobs: 2500 },
+];
+const DISTRICT_NAMES = ['北野', '白山', '緑町', '旭ヶ丘', '西浜', '本町', '東雲', '川口', '錦', '港町', '若松', '南台', '桜台', '新川', '臨海', '青葉', '栄', '大手町'];
+const NUMS = ['', '二丁目', '三丁目', '四丁目', '五丁目', '六丁目', '七丁目', '八丁目', '九丁目'];
+
+const GOALS = [
+  { id: 'first', label: '最初の路線を開業する', reward: 1e8, test: () => S.lines.length >= 1 },
+  { id: 'riders10k', label: '1日の利用者 1万人', reward: 2e8, test: () => S.yday.rides >= 1e4 },
+  { id: 'share10', label: '公共交通の分担率 10%', reward: 2e8, test: () => S.yday.share >= 0.10 },
+  { id: 'metro', label: '地下鉄を開業する', reward: 3e8, test: () => S.lines.some(l => l.mode === 'metro') },
+  { id: 'suburb', label: '郊外と鉄道でつなぐ', reward: 3e8, test: () => S.ext.some(e => e.served) },
+  { id: 'share20', label: '公共交通の分担率 20%', reward: 4e8, test: () => S.yday.share >= 0.20 },
+  { id: 'riders100k', label: '1日の利用者 10万人', reward: 5e8, test: () => S.yday.rides >= 1e5 },
+  { id: 'commute', label: '平均通勤時間 28分以下', reward: 5e8, test: () => S.yday.avgT > 0 && S.yday.avgT <= 28 },
+  { id: 'jam', label: '渋滞度を 30 以下に', reward: 5e8, test: () => S.yday.jam > 0 && S.yday.jam <= 30 },
+  { id: 'share35', label: '公共交通の分担率 35%', reward: 1e9, test: () => S.yday.share >= 0.35 },
+];
+
+// ===== 状態 =====
+let MAP;          // 地図（道路・街区）。シードから毎回同じものを作る
+let S;            // 保存するゲーム状態
+let ROAD = null;  // 道路の最短時間表
+let TR = null;    // 公共交通の最短時間表と乗り換え案内
+let FLOWS = new Map();   // 今の1時間に駅で発生する利用者（出発停留所×到着停留所 → 毎分の人数）
+let view = { x: 0, y: 0, s: 1 };
+let speed = 1, tab = 'lines', layer = 'normal';
+let selLine = null, sel = null;   // sel: {kind:'stop'|'block'|'link', id}
+let draft = null, tool = null;    // tool: 'busLane'
+let pendingConfirm = null, FX = [], dirtyPanel = true;
+
+// ===== ユーティリティ =====
+const $ = s => document.querySelector(s);
+const hyp = (ax, ay, bx, by) => Math.hypot(bx - ax, by - ay);
+function rng(seed) {
+  return () => {
+    seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function yen(v) {
+  const s = v < 0 ? '-' : '', a = Math.abs(v);
+  if (a >= 1e8) return s + '¥' + (a / 1e8).toFixed(a >= 1e10 ? 0 : 1) + '億';
+  if (a >= 1e4) return s + '¥' + Math.round(a / 1e4).toLocaleString() + '万';
+  return s + '¥' + Math.round(a).toLocaleString();
+}
+const man = n => (n >= 1e4 ? (n / 1e4).toLocaleString(undefined, { maximumFractionDigits: 1 }) + '万' : Math.round(n).toLocaleString());
+const pct = v => (v * 100).toFixed(1) + '%';
+const dateAt = t => new Date(BASE_DATE + t * 60e3);
+function dateStr(t, withTime) {
+  const d = dateAt(t);
+  const s = `${d.getUTCFullYear()}/${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+  return withTime ? s + ' ' + String(d.getUTCHours()).padStart(2, '0') + ':' + String(Math.floor(d.getUTCMinutes() / 10) * 10).padStart(2, '0') : s;
+}
+function log(msg) { S.log.unshift({ t: S.t, msg }); if (S.log.length > 80) S.log.length = 80; dirtyPanel = true; }
+let toastTimer;
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg; el.style.opacity = 1;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (el.style.opacity = 0), 2800);
+}
+const cleanName = v => (v || '').replace(/[<>&"'`]/g, '').trim().slice(0, 16);
+
+// ===== 地形 =====
+function inPoly(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function distToPolyline(x, y, pts) {
+  let best = Infinity;
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
+    const dx = bx - ax, dy = by - ay;
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)));
+    best = Math.min(best, hyp(x, y, ax + dx * t, ay + dy * t));
+  }
+  return best;
+}
+const isWater = (x, y) => inPoly(x, y, BAY) || distToPolyline(x, y, RIVER) < RIVER_HALF;
+const nearWater = (x, y, r) => isWater(x, y) || distToPolyline(x, y, RIVER) < RIVER_HALF + r || [[r, 0], [-r, 0], [0, r], [0, -r]].some(([dx, dy]) => inPoly(x + dx, y + dy, BAY));
+function waterFraction(pts, skipEnds) {
+  let n = 0, w = 0, d0 = 0;
+  const total = pts.reduce((a, p, i) => a + (i ? hyp(pts[i - 1].x, pts[i - 1].y, p.x, p.y) : 0), 0);
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i], d = hyp(a.x, a.y, b.x, b.y);
+    const k = Math.max(1, Math.ceil(d / 5));
+    for (let j = 0; j < k; j++) {
+      const t = (j + 0.5) / k, along = d0 + d * t;
+      if (along < skipEnds || along > total - skipEnds) continue;
+      n++;
+      if (isWater(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)) w++;
+    }
+    d0 += d;
+  }
+  return { len: total, water: n ? w / n : 0, waterLen: n ? total * w / n : 0 };
+}
+
+// ===== 地図づくり =====
+function genMap() {
+  const rand = rng(SEED);
+  const nodes = [], at = {};
+  for (let j = 0; j <= 10; j++) for (let i = 0; i <= 15; i++) {
+    let x = 50 + i * 100, y = 50 + j * 100;
+    const art = i % 4 === 1 || j % 3 === 1;
+    const jx = (rand() - 0.5) * 26, jy = (rand() - 0.5) * 26;
+    if (!art) { x += jx; y += jy; }
+    if (nearWater(x, y, 10)) continue;
+    at[i + ',' + j] = nodes.length;
+    nodes.push({ x, y, i, j });
+  }
+  let links = [];
+  nodes.forEach((n, a) => {
+    [[1, 0], [0, 1]].forEach(([di, dj]) => {
+      const b = at[(n.i + di) + ',' + (n.j + dj)];
+      if (b === undefined) return;
+      const m = nodes[b];
+      const art = di ? n.j % 3 === 1 : n.i % 4 === 1;
+      let wet = false;
+      for (let t = 0.05; t < 1; t += 0.05) if (isWater(n.x + (m.x - n.x) * t, n.y + (m.y - n.y) * t)) wet = true;
+      const r = rand();
+      if (wet && !art) return;
+      if (!art && !wet && hyp(n.x, n.y, CBD.x, CBD.y) > 450 && r < 0.12) return;
+      links.push({ a, b, art, bridge: wet });
+    });
+  });
+  // 一番大きくつながった道路網だけ残す
+  const adj = nodes.map(() => []);
+  links.forEach((l, k) => { adj[l.a].push(k); adj[l.b].push(k); });
+  const comp = new Array(nodes.length).fill(-1);
+  let best = -1, bestSize = 0;
+  for (let s = 0; s < nodes.length; s++) {
+    if (comp[s] >= 0) continue;
+    const st = [s]; comp[s] = s; let size = 0;
+    while (st.length) { const u = st.pop(); size++; adj[u].forEach(k => { const v = links[k].a === u ? links[k].b : links[k].a; if (comp[v] < 0) { comp[v] = s; st.push(v); } }); }
+    if (size > bestSize) { bestSize = size; best = s; }
+  }
+  const remap = [], keep = [];
+  nodes.forEach((n, i) => { if (comp[i] === best) { remap[i] = keep.length; keep.push(n); } });
+  links = links.filter(l => comp[l.a] === best).map(l => ({ ...l, a: remap[l.a], b: remap[l.b] }));
+  links.forEach(l => {
+    const A = keep[l.a], B = keep[l.b];
+    l.len = hyp(A.x, A.y, B.x, B.y);
+    l.cap = l.art ? 1500 : 500;          // 1時間に通れる車の台数
+    l.vf = l.art ? 80 : 50;              // 制限速度（単位/分）
+    l.t0 = l.len / l.vf;
+  });
+  const nAdj = keep.map(() => []);
+  links.forEach((l, k) => { nAdj[l.a].push(k); nAdj[l.b].push(k); });
+
+  // 街区
+  const blocks = [];
+  for (let j = 0; j < 10; j++) for (let i = 0; i < 15; i++) {
+    const x = 100 + i * 100, y = 100 + j * 100;
+    if (nearWater(x, y, 6)) continue;
+    const d = hyp(x, y, CBD.x, CBD.y);
+    const noise = 0.75 + rand() * 0.5;
+    const park = rand() < 0.06;
+    let type, res, jobs;
+    if (d < 170) { type = 'off'; res = 400; jobs = 5200; }
+    else if (d < 330) { type = 'com'; res = 2200; jobs = 1900; }
+    else if (x > 1000 && y > 640) { type = 'ind'; res = 100; jobs = 2300; }
+    else if (park) { type = 'park'; res = 0; jobs = 60; }
+    else { type = 'res'; res = 600 + 3400 * Math.exp(-d / 650); jobs = 160; }
+    let node = 0, nd = Infinity;
+    keep.forEach((n, k) => { const dd = hyp(n.x, n.y, x, y); if (dd < nd) { nd = dd; node = k; } });
+    blocks.push({ x, y, i, j, type, res: Math.round(res * noise), jobs: Math.round(jobs * noise), node, gx: Math.floor(i / 4), gy: Math.floor(j / 3) });
+  }
+  // 地区名（都心を含む地区は「中央」）
+  const dkeys = [...new Set(blocks.map(b => b.gx + ',' + b.gy))];
+  const cb = blocks.reduce((a, b) => (hyp(b.x, b.y, CBD.x, CBD.y) < hyp(a.x, a.y, CBD.x, CBD.y) ? b : a));
+  let ni = 0;
+  const dname = {};
+  dkeys.forEach(k => { dname[k] = k === cb.gx + ',' + cb.gy ? '中央' : DISTRICT_NAMES[ni++ % DISTRICT_NAMES.length]; });
+  blocks.forEach(b => (b.district = dname[b.gx + ',' + b.gy]));
+  const exts = EXTS.map(e => {
+    let node = 0, nd = Infinity;
+    keep.forEach((n, k) => { const dd = hyp(n.x, n.y, e.x, e.y); if (dd < nd) { nd = dd; node = k; } });
+    return { ...e, node };
+  });
+  return { nodes: keep, links, nAdj, blocks, exts };
+}
+
+function newGame() {
+  return {
+    v: 1, money: 1.5e9, loan: 0, t: 5 * 60, sat: 50,
+    stops: [], lines: [], vehicles: [],
+    waiting: [],                       // waiting[停留所] = {行き先停留所: 人数}
+    tracks: {},                        // 地下鉄・鉄道・水上バスの線路（駅間の経由点）
+    tram: {}, busLane: {},             // 道路区間ごとの路面電車の線路・専用レーン
+    pop: MAP.blocks.map(b => [b.res, b.jobs]),
+    ext: MAP.exts.map(() => ({ served: false })),
+    ema: MAP.links.map(() => 0),       // 道路の交通量（台/時、なめらかにしたもの）
+    today: blankDay(), yday: blankDay(), hist: [],
+    goals: {}, log: [], nextId: 1, negDays: 0, over: false,
+  };
+}
+function blankDay() { return { trips: 0, transit: 0, car: 0, stranded: 0, lost: 0, timeSum: 0, rides: 0, rev: 0, cost: 0, sub: 0, share: 0, avgT: 0, jam: 0, jamSum: 0, jamN: 0 }; }
+
+// ===== 道路の混み具合 =====
+// BPR式：交通量が容量に近づくほど急に遅くなる
+function linkTime(k) {
+  const l = MAP.links[k], vc = S.ema[k] / l.cap;
+  return l.t0 * Math.min(8, 1 + 0.15 * vc ** 4);
+}
+// 全交差点間の車の最短時間と経路（親リンク）を計算する
+function computeRoad() {
+  const N = MAP.nodes.length;
+  const lt = MAP.links.map((l, k) => linkTime(k));
+  const dist = new Float32Array(N * N).fill(Infinity), par = new Int32Array(N * N).fill(-1);
+  const done = new Uint8Array(N);
+  for (let s = 0; s < N; s++) {
+    const o = s * N;
+    done.fill(0);
+    dist[o + s] = 0;
+    for (;;) {
+      let u = -1, du = Infinity;
+      for (let i = 0; i < N; i++) if (!done[i] && dist[o + i] < du) { du = dist[o + i]; u = i; }
+      if (u < 0) break;
+      done[u] = 1;
+      for (const k of MAP.nAdj[u]) {
+        const l = MAP.links[k], v = l.a === u ? l.b : l.a, nd = du + lt[k];
+        if (nd < dist[o + v]) { dist[o + v] = nd; par[o + v] = k; }
+      }
+    }
+  }
+  ROAD = { dist, par, lt };
+}
+function roadPath(s, d) {
+  const N = MAP.nodes.length, out = [];
+  let v = d, guard = 0;
+  while (v !== s && guard++ < 400) {
+    const k = ROAD.par[s * N + v];
+    if (k < 0) return null;
+    out.push(k);
+    const l = MAP.links[k];
+    v = l.a === v ? l.b : l.a;
+  }
+  return out;
+}
+// 作図用：距離だけで見た交差点間の最短経路
+function shortestByLength(s, d) {
+  const N = MAP.nodes.length;
+  const dist = new Float64Array(N).fill(Infinity), par = new Int32Array(N).fill(-1), done = new Uint8Array(N);
+  dist[s] = 0;
+  for (;;) {
+    let u = -1, du = Infinity;
+    for (let i = 0; i < N; i++) if (!done[i] && dist[i] < du) { du = dist[i]; u = i; }
+    if (u < 0 || u === d) break;
+    done[u] = 1;
+    for (const k of MAP.nAdj[u]) {
+      const l = MAP.links[k], v = l.a === u ? l.b : l.a, nd = du + l.len;
+      if (nd < dist[v]) { dist[v] = nd; par[v] = k; }
+    }
+  }
+  if (dist[d] === Infinity) return null;
+  const links = [], nodes = [d];
+  let v = d;
+  while (v !== s) { const k = par[v]; links.unshift(k); const l = MAP.links[k]; v = l.a === v ? l.b : l.a; nodes.unshift(v); }
+  return { links, nodes };
+}
+
+// ===== 公共交通網 =====
+const lineById = id => S.lines.find(l => l.id === id);
+const stopModes = s => Object.keys(s.modes || {}).filter(m => s.modes[m]);
+function stopCap(i) { return Math.max(60, ...stopModes(S.stops[i]).map(m => MODES[m].stopCap)); }
+function waitTotal(i) { let n = 0; const w = S.waiting[i]; for (const k in w) n += w[k]; return n; }
+function segTimeRoad(mode, links) {
+  const M = MODES[mode];
+  let t = 0;
+  links.forEach(k => {
+    const l = MAP.links[k];
+    const free = l.len / Math.min(M.speed, l.vf * 1.1);
+    const lane = S.busLane[k];
+    const jam = Math.max(0, (ROAD ? ROAD.lt[k] : l.t0) - l.t0);
+    t += free + (lane ? 0 : jam * (mode === 'tram' ? 0.3 : 1));
+  });
+  return t;
+}
+// 路線の形と所要時間を作り直す
+function lineGeom(L) {
+  const M = MODES[L.mode];
+  L._segs = [];
+  L._cum = [0];
+  for (let k = 1; k < L.stops.length; k++) {
+    const seg = L.segs[k - 1];
+    let pts;
+    if (M.road) pts = seg.nodes.map(n => ({ x: MAP.nodes[n].x, y: MAP.nodes[n].y }));
+    else {
+      const a = L.stops[k - 1], b = L.stops[k];
+      const tr = S.tracks[trackKey(L.mode, a, b)];
+      const mid = tr ? (a < b ? tr.pts : tr.pts.slice().reverse()) : [];
+      pts = [S.stops[a], ...mid, S.stops[b]].map(p => ({ x: p.x, y: p.y }));
+    }
+    let d = L._cum[k - 1];
+    const sp = [{ ...pts[0], d }];
+    for (let j = 1; j < pts.length; j++) { d += hyp(pts[j - 1].x, pts[j - 1].y, pts[j].x, pts[j].y); sp.push({ ...pts[j], d }); }
+    const len = d - L._cum[k - 1];
+    const time = M.road ? segTimeRoad(L.mode, seg.links) : len / M.speed;
+    L._segs.push({ pts: sp, len, time, v: len / Math.max(0.1, time) });
+    L._cum.push(d);
+  }
+  L._len = L._cum[L._cum.length - 1];
+  const n = S.vehicles.filter(v => v.line === L.id).length;
+  L._rt = 2 * L._segs.reduce((a, s) => a + s.time, 0) + 2 * (L.stops.length - 1) * M.dwell;
+  L._headway = n ? L._rt / n : Infinity;
+}
+const trackKey = (mode, a, b) => mode + ':' + (a < b ? a + '-' + b : b + '-' + a);
+
+// 各街区から歩いて行ける停留所
+function computeAccess() {
+  // 地下鉄・鉄道の駅へは、遠くても歩いて行く人が多い（駅勢圏が広い）
+  const near = (x, y, r) => {
+    const out = [];
+    S.stops.forEach((s, i) => {
+      if (s.planned || !stopModes(s).length || !S.lines.some(L => L.stops.includes(i))) return;
+      const d = hyp(x, y, s.x, s.y);
+      const rr = r + (s.modes.metro || s.modes.rail ? 30 : 0);
+      if (d <= rr) out.push({ s: i, w: d / WALK * 0.6 + 1 });
+    });
+    return out.sort((a, b) => a.w - b.w).slice(0, 4);
+  };
+  MAP.blocks.forEach(b => (b._acc = near(b.x, b.y, ACCESS_R)));
+  MAP.exts.forEach((e, i) => {
+    e._acc = near(e.x, e.y, 90).filter(a => S.stops[a.s].modes.rail);
+    S.ext[i].served = e._acc.length > 0;
+  });
+}
+// 停留所間の最短時間（待ち時間・運賃の負担を含む）と、最初に乗る路線
+function computeTransit() {
+  const N = S.stops.length;
+  const adj = Array.from({ length: N }, () => []);
+  S.lines.forEach(L => {
+    if (!isFinite(L._headway)) return;
+    const M = MODES[L.mode];
+    const wait = Math.min(30, L._headway / 2) + M.fare * L.fareMult / 60;
+    const at = [0];
+    for (let k = 1; k < L.stops.length; k++) at.push(at[k - 1] + L._segs[k - 1].time + M.dwell);
+    for (let i = 0; i < L.stops.length; i++) for (let j = 0; j < L.stops.length; j++) {
+      if (i === j) continue;
+      adj[L.stops[i]].push({ to: L.stops[j], c: Math.abs(at[j] - at[i]) + wait, line: L.id });
+    }
+  });
+  // 近くの停留所どうしは歩いて乗り換えられる
+  for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+    const a = S.stops[i], b = S.stops[j];
+    if (a.planned || b.planned) continue;
+    const d = hyp(a.x, a.y, b.x, b.y);
+    if (d < 60) { const c = d / WALK + 1; adj[i].push({ to: j, c, walk: true }); adj[j].push({ to: i, c, walk: true }); }
+  }
+  const T = new Float32Array(N * N).fill(Infinity);
+  const first = new Array(N * N).fill(null);
+  const done = new Uint8Array(N);
+  for (let s = 0; s < N; s++) {
+    const o = s * N;
+    done.fill(0);
+    T[o + s] = 0;
+    for (;;) {
+      let u = -1, du = Infinity;
+      for (let i = 0; i < N; i++) if (!done[i] && T[o + i] < du) { du = T[o + i]; u = i; }
+      if (u < 0) break;
+      done[u] = 1;
+      for (const e of adj[u]) {
+        const nd = du + e.c + (u === s || e.walk ? 0 : 3);   // 乗り換えの手間
+        if (nd < T[o + e.to]) {
+          T[o + e.to] = nd;
+          first[o + e.to] = u === s ? (e.walk ? { walk: e.to } : { line: e.line, alight: e.to }) : first[o + u];
+        }
+      }
+    }
+  }
+  TR = { N, T, first };
+}
+function rebuildNet() {
+  S.lines.forEach(lineGeom);
+  computeAccess();
+  computeTransit();
+  // 行けなくなった待ち客は帰る
+  S.waiting.forEach((w, s) => { for (const k in w) if (!TR.first[s * TR.N + +k]) delete w[k]; });
+  dirtyPanel = true;
+}
+
+// ===== 移動の発生と交通手段の選択（1時間ごと） =====
+let DEST = null;
+function buildDestTables() {
+  // 出発地ごとに、行き先の選ばれやすさ（大きさ÷距離）の累積表を作る
+  const pts = MAP.blocks.map((b, i) => ({ x: b.x, y: b.y, res: S.pop[i][0], jobs: S.pop[i][1], node: b.node, kind: 'b', i }))
+    .concat(MAP.exts.map((e, i) => ({ x: e.x, y: e.y, res: e.res * (S.extGrow || 1), jobs: e.jobs, node: e.node, kind: 'e', i })));
+  const mk = (o, field) => {
+    let acc = 0;
+    const cum = pts.map(p => { const d = hyp(o.x, o.y, p.x, p.y); acc += p === o ? 0 : p[field] * Math.exp(-d / (o.kind === 'e' || p.kind === 'e' ? 900 : 500)); return acc; });
+    return cum;
+  };
+  DEST = { pts, toJob: pts.map(o => mk(o, 'jobs')), toHome: pts.map(o => mk(o, 'res')) };
+}
+function sample(cum, r) {
+  const x = r * cum[cum.length - 1];
+  let lo = 0, hi = cum.length - 1;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (cum[m] < x) lo = m + 1; else hi = m; }
+  return lo;
+}
+const accOf = p => (p.kind === 'b' ? MAP.blocks[p.i]._acc : MAP.exts[p.i]._acc) || [];
+function parkTime(p) { if (p.kind === 'e') return 3; const t = MAP.blocks[p.i].type; return t === 'off' ? 15 : t === 'com' ? 10 : 3; }
+function hourlyTrips(hour) {
+  const vol = new Float32Array(MAP.links.length);
+  FLOWS = new Map();
+  const N = MAP.nodes.length, D = S.today;
+  const pts = DEST.pts;
+  const K = 4;
+  const rand = Math.random;
+  pts.forEach((o, oi) => {
+    [['res', OUTF, DEST.toJob], ['jobs', BACKF, DEST.toHome]].forEach(([field, prof, table]) => {
+      const n = o[field] * TRIPS_PER_PERSON * prof[hour];
+      if (n < 0.5) return;
+      for (let k = 0; k < K; k++) {
+        const di = sample(table[oi], rand());
+        const d = pts[di];
+        if (d === o) continue;
+        const m = n / K;
+        const straight = hyp(o.x, o.y, d.x, d.y);
+        D.trips += m;
+        if (straight < 60) { D.timeSum += m * straight / WALK; continue; }   // 近所は歩く
+        const ext = (o.kind === 'e' || d.kind === 'e') ? 15 : 0;
+        const Tc = ROAD.dist[o.node * N + d.node] + parkTime(d) + 3 + ext;
+        let Tt = Infinity, ba = -1, be = -1;
+        for (const a of accOf(o)) for (const e of accOf(d)) {
+          if (a.s === e.s) continue;
+          const t = a.w + TR.T[a.s * TR.N + e.s] + e.w;
+          if (t < Tt) { Tt = t; ba = a.s; be = e.s; }
+        }
+        if (o.kind === 'e' && ba < 0) Tt = Infinity;
+        // 車を持たない人（30%）は公共交通しか使えない
+        const captive = 0.3;
+        const hasT = Tt < 150;
+        const pT = hasT ? 1 / (1 + Math.exp((Tt - Tc) / 7 - 0.2)) : 0;
+        const nT = m * (hasT ? captive + (1 - captive) * pT : 0);
+        const nS = hasT ? 0 : m * captive;
+        const nC = m - nT - nS;
+        D.transit += nT; D.car += nC; D.stranded += nS;
+        D.timeSum += (nT > 0 ? nT * Tt : 0) + (nC > 0 ? nC * (Tc - ext) : 0) + nS * 60;
+        if (nT > 0) {
+          const key = ba * 100000 + be;
+          FLOWS.set(key, (FLOWS.get(key) || 0) + nT / 60);
+        }
+        if (nC > 0) {
+          const path = roadPath(o.node, d.node);
+          if (path) path.forEach(lk => (vol[lk] += nC / 1.2));
+        }
+      }
+    });
+  });
+  // 交通量をなめらかに更新し、渋滞度を記録する
+  let js = 0, jn = 0;
+  MAP.links.forEach((l, k) => {
+    S.ema[k] = S.ema[k] * 0.5 + vol[k] * 0.5;
+    js += Math.min(2, S.ema[k] / l.cap) * l.len; jn += l.len;
+  });
+  if (hour >= 6 && hour <= 21) { D.jamSum += js / jn; D.jamN++; }
+}
+let flowAcc = new Map();
+function spawnPassengers(dt) {
+  FLOWS.forEach((rate, key) => {
+    const a = Math.floor(key / 100000), e = key % 100000;
+    const v = (flowAcc.get(key) || 0) + rate * dt;
+    const n = Math.floor(v);
+    flowAcc.set(key, v - n);
+    if (n > 0) addWaiting(a, e, n);
+  });
+}
+// 待ち客を加える。最初の一歩が「歩いて隣の停留所へ」なら、そちらで待たせる
+function addWaiting(s, dest, n) {
+  for (let g = 0; g < 3; g++) {
+    if (s === dest) return;
+    const f = TR.first[s * TR.N + dest];
+    if (!f) return;
+    if (f.walk === undefined) break;
+    s = f.walk;
+  }
+  const w = S.waiting[s];
+  w[dest] = (w[dest] || 0) + n;
+  const over = waitTotal(s) - stopCap(s);
+  if (over > 0) {
+    let left = over;
+    for (const k in w) { const x = Math.min(left, w[k]); w[k] -= x; left -= x; if (w[k] <= 0) delete w[k]; if (left <= 0) break; }
+    S.today.lost += over;
+  }
+}
+
+// ===== 車両の運行 =====
+function arrive(v, L, i) {
+  const c = L.stops[i], M = MODES[L.mode];
+  for (const key in v.pax) {
+    const [al, dest] = key.split(',').map(Number);
+    if (al !== c) continue;
+    const n = v.pax[key];
+    delete v.pax[key];
+    v.load -= n;
+    if (dest !== c) addWaiting(c, dest, n);
+  }
+  if (i === 0) v.dir = 1;
+  else if (i === L.stops.length - 1) v.dir = -1;
+  v.next = i + v.dir;
+  let boarded = 0;
+  const w = S.waiting[c];
+  for (const k in w) {
+    if (v.load >= M.cap) break;
+    const dest = +k, f = TR.first[c * TR.N + dest];
+    if (!f || f.line !== L.id) continue;
+    const ai = L.stops.indexOf(f.alight);
+    if ((ai - i) * v.dir <= 0) continue;
+    const n = Math.min(w[k], M.cap - v.load);
+    w[k] -= n;
+    if (w[k] <= 0) delete w[k];
+    const key = f.alight + ',' + dest;
+    v.pax[key] = (v.pax[key] || 0) + n;
+    v.load += n;
+    boarded += n;
+  }
+  if (boarded) {
+    const fare = boarded * M.fare * L.fareMult;
+    S.money += fare; S.today.rev += fare; S.today.rides += boarded;
+    L.rides = (L.rides || 0) + boarded; L.rev = (L.rev || 0) + fare;
+    if (fare >= 5e4 && FX.length < 40) FX.push({ x: S.stops[c].x, y: S.stops[c].y, text: '+' + yen(fare), life: 1 });
+  }
+  v.dwell = M.dwell * (0.5 + boarded / M.cap);
+}
+function moveVehicle(v, dt) {
+  const L = lineById(v.line);
+  if (!L || !L._segs.length) return;
+  if (v.dwell > 0) { v.dwell -= dt; return; }
+  const k = Math.min(L._segs.length - 1, v.dir > 0 ? v.next - 1 : v.next);
+  const step = L._segs[Math.max(0, k)].v * dt;
+  const target = L._cum[v.next];
+  if (v.dir > 0) { v.pos += step; if (v.pos >= target) { v.pos = target; arrive(v, L, v.next); } }
+  else { v.pos -= step; if (v.pos <= target) { v.pos = target; arrive(v, L, v.next); } }
+}
+
+// ===== 時間の進行 =====
+function step(dt) {
+  const ph = Math.floor(S.t / 60), pd = Math.floor(S.t / 1440);
+  S.t += dt;
+  const h = Math.floor(S.t / 60);
+  if (h !== ph) onHour(h % 24);
+  if (Math.floor(S.t / 1440) !== pd) onDay();
+  spawnPassengers(dt);
+  for (const v of S.vehicles) moveVehicle(v, dt);
+}
+function onHour(hour) {
+  computeRoad();
+  S.lines.forEach(lineGeom);
+  computeTransit();
+  hourlyTrips(hour);
+}
+function dailyUpkeep() {
+  let c = 0;
+  S.vehicles.forEach(v => { const L = lineById(v.line); if (L) c += MODES[L.mode].vehUp; });
+  const used = new Set();
+  S.lines.forEach(L => {
+    const M = MODES[L.mode];
+    L.segs.forEach((seg, k) => {
+      if (M.road) { if (L.mode === 'tram') seg.links.forEach(lk => { if (!used.has('t' + lk)) { used.add('t' + lk); c += MAP.links[lk].len * M.trackUp; } }); }
+      else { const key = trackKey(L.mode, L.stops[k], L.stops[k + 1]); if (!used.has(key)) { used.add(key); c += L._segs[k].len * M.trackUp; } }
+    });
+  });
+  S.stops.forEach(s => stopModes(s).forEach(m => (c += MODES[m].stopCost * 0.001)));
+  return c;
+}
+function onDay() {
+  const D = S.today;
+  D.share = D.trips ? D.transit / Math.max(1, D.transit + D.car + D.stranded) : 0;
+  D.avgT = D.trips ? D.timeSum / D.trips : 0;
+  D.jam = D.jamN ? Math.round(D.jamSum / D.jamN * 100) : 0;
+  const up = dailyUpkeep();
+  const interest = S.loan * 0.0002;
+  // 市からの補助金：分担率が高く、渋滞が少ないほど多い
+  const sub = 1.5e7 + D.share * 3e8 + Math.max(0, 50 - D.jam) * 1e6;
+  S.money += sub - up - interest;
+  D.cost += up + interest; D.sub = sub;
+  // 市民の満足度：通勤時間と、移動できなかった人の割合
+  const bad = (D.stranded + D.lost) / Math.max(1, D.trips);
+  const target = Math.max(0, Math.min(100, 100 - Math.max(0, D.avgT - 24) * 3 - bad * 120));
+  S.sat += (target - S.sat) * 0.3;
+  // 満足度が高いと人が増える
+  const g = (S.sat - 45) / 20000;
+  S.pop.forEach(p => { p[0] *= 1 + g; p[1] *= 1 + g * 0.8; });
+  S.hist.push({ day: dateStr(S.t - 1), share: D.share, avgT: D.avgT, jam: D.jam, rides: D.rides, rev: D.rev, cost: D.cost, sub: D.sub });
+  if (S.hist.length > 30) S.hist.shift();
+  log(`${dateStr(S.t - 1)}：利用 ${man(D.rides)}人・分担率 ${pct(D.share)}・渋滞度 ${D.jam}・収支 ${yen(D.rev + D.sub - D.cost)}`);
+  S.yday = D;
+  S.today = blankDay();
+  S.lines.forEach(L => { L.ridesY = L.rides || 0; L.revY = L.rev || 0; L.rides = 0; L.rev = 0; });
+  buildDestTables();
+  checkGoals();
+  if (S.money < 0) {
+    S.negDays++;
+    if (S.negDays >= 7) { S.over = true; showGameOver(); }
+    else log(`⚠ 資金がマイナスです（${S.negDays}/7日）。7日続くと交通局は解散です。財務タブで借入できます。`);
+  } else S.negDays = 0;
+  save();
+}
+function checkGoals() {
+  GOALS.forEach(g => {
+    if (S.goals[g.id] || !g.test()) return;
+    S.goals[g.id] = S.t;
+    S.money += g.reward;
+    log(`🎯 目標達成：${g.label}（市から ${yen(g.reward)}）`);
+    toast(`目標達成：${g.label}　${yen(g.reward)}`);
+  });
+}
+
+// ===== 建設 =====
+// 停留所の名前：地区名＋丁目 → 地区名＋方角 → 地区名＋街の種類、の順に空いているものを使う
+function stopName(x, y) {
+  const b = MAP.blocks.reduce((a, c) => (hyp(c.x, c.y, x, y) < hyp(a.x, a.y, x, y) ? c : a));
+  const used = new Set(S.stops.map(s => s.name));
+  const kind = { res: ['住宅前', '団地', '小学校前'], com: ['商店街', '本通り', '市場前'], off: ['オフィス前', '市役所前', '銀行前'], ind: ['工場前', '倉庫前', '工業団地'], park: ['公園前', '公園西口', '公園東口'] }[b.type];
+  const cands = [...NUMS, '北', '南', '東', '西', ...kind, '一番街', '二番街', '三番街', '橋', '交差点', '中央通り'];
+  for (const n of cands) if (!used.has(b.district + n)) return b.district + n;
+  let k = 2;
+  while (used.has(`${b.district}第${k}`)) k++;
+  return `${b.district}第${k}`;
+}
+function nodeStop(n) {
+  const i = S.stops.findIndex(s => s.node === n && !s.removed);
+  if (i >= 0) return i;
+  const N = MAP.nodes[n];
+  S.stops.push({ x: N.x, y: N.y, node: n, name: stopName(N.x, N.y), modes: {}, planned: true });
+  S.waiting.push({});
+  return S.stops.length - 1;
+}
+function startBuild(mode, lineId) {
+  tool = null;
+  const L = lineId ? lineById(lineId) : null;
+  draft = {
+    mode, lineId: lineId || null,
+    stops: L ? L.stops.slice() : [], segs: L ? L.segs.map(s => ({ ...s, keep: true })) : [],
+    vias: [], pending: [], undo: [], planned: [], prepend: false, via: false, added: 0,
+  };
+  renderBuildBar();
+  if (window.innerWidth < 900) $('#panel').classList.add('collapsed');
+  toast(L ? '延伸先をタップしてください' : MODES[mode].road ? '始点の交差点をタップしてください' : '駅を置く場所をタップしてください');
+}
+// 作図中の区間の形を計算する（道路系は交差点の経路、それ以外は折れ線）
+function draftSeg(a, b, vias) {
+  const M = MODES[draft.mode];
+  if (M.road) {
+    const pts = [S.stops[a].node, ...vias.map(v => v.node), S.stops[b].node];
+    const nodes = [pts[0]], links = [];
+    for (let i = 1; i < pts.length; i++) {
+      const r = shortestByLength(pts[i - 1], pts[i]);
+      if (!r) return null;
+      links.push(...r.links); nodes.push(...r.nodes.slice(1));
+    }
+    return { nodes, links, vias: vias.map(v => v.node) };
+  }
+  return { pts: vias.map(v => ({ x: v.x, y: v.y })) };
+}
+function segInfo(mode, a, b, seg) {
+  const M = MODES[mode];
+  if (M.road) {
+    let cost = 0, len = 0;
+    seg.links.forEach(k => { len += MAP.links[k].len; if (mode === 'tram' && !S.tram[k]) cost += MAP.links[k].len * M.segCost; });
+    return { cost, len, ok: true };
+  }
+  if (S.tracks[trackKey(mode, a, b)]) return { cost: 0, len: 0, ok: true, reuse: true };
+  const pts = [S.stops[a], ...seg.pts, S.stops[b]].map(p => ({ x: p.x, y: p.y }));
+  const wf = waterFraction(pts, mode === 'ferry' ? 30 : 0);
+  if (mode === 'ferry') return { cost: 0, len: wf.len, ok: wf.water > 0.97, msg: '水上バスの航路が陸地を通っています' };
+  const mult = mode === 'rail' ? 4 : 1.5;   // 鉄道は橋、地下鉄は川底トンネル
+  return { cost: (wf.len - wf.waterLen) * M.segCost + wf.waterLen * M.segCost * mult, len: wf.len, ok: true, water: wf.waterLen };
+}
+function draftInfo() {
+  const M = MODES[draft.mode];
+  const r = { cost: 0, len: 0, ok: true, msg: '' };
+  draft.stops.forEach(s => { if (!S.stops[s].modes[draft.mode]) r.cost += M.stopCost; });
+  for (let k = 1; k < draft.stops.length; k++) {
+    const seg = draft.segs[k - 1];
+    if (!seg) { r.ok = false; r.msg = '道路がつながっていません'; continue; }
+    if (seg.keep) continue;
+    const si = segInfo(draft.mode, draft.stops[k - 1], draft.stops[k], seg);
+    r.cost += si.cost; r.len += si.len;
+    if (!si.ok) { r.ok = false; r.msg = si.msg; }
+  }
+  if (!draft.lineId) r.cost += M.vehCost * 2;
+  return r;
+}
+function draftAddStop(s) {
+  if (draft.stops.includes(s)) { toast('同じ停留所を2回通ることはできません'); return false; }
+  const wps = draft.pending;
+  const end = draft.prepend ? draft.stops[0] : draft.stops[draft.stops.length - 1];
+  if (draft.stops.length) {
+    const seg = draft.prepend ? draftSeg(s, end, wps.slice().reverse()) : draftSeg(end, s, wps);
+    if (!seg) { toast('道路がつながっていません'); return false; }
+    if (draft.prepend) { draft.stops.unshift(s); draft.segs.unshift(seg); }
+    else { draft.stops.push(s); draft.segs.push(seg); }
+  } else draft.stops.push(s);
+  draft.undo.push({ wps });
+  draft.pending = [];
+  draft.added++;
+  renderBuildBar();
+  return true;
+}
+function draftTap(sx, sy) {
+  const p = toWorld(sx, sy);
+  const M = MODES[draft.mode];
+  if (M.road) {
+    const n = nearestNode(p, 28 / view.s);
+    if (n < 0) { toast('交差点の近くをタップしてください'); return; }
+    if (draft.via) {
+      if (!draft.stops.length) { toast('先に始点の停留所をタップしてください'); return; }
+      draft.pending.push({ node: n, x: MAP.nodes[n].x, y: MAP.nodes[n].y });
+      draft.undo.push({ via: true });
+      renderBuildBar();
+      return;
+    }
+    const before = S.stops.length;
+    const s = nodeStop(n);
+    if (S.stops.length > before) draft.planned.push(s);
+    if (!draftAddStop(s) && S.stops.length > before) dropPlanned(s);
+    return;
+  }
+  // 地下鉄・鉄道・水上バス
+  const near = nearestStop(p, 22 / view.s, i => S.stops[i].node === undefined);
+  if (draft.via) {
+    if (!draft.stops.length) { toast('先に始点の駅をタップしてください'); return; }
+    draft.pending.push({ x: Math.round(p.x), y: Math.round(p.y) });
+    draft.undo.push({ via: true });
+    renderBuildBar();
+    return;
+  }
+  if (near >= 0) { draftAddStop(near); return; }
+  if (isWater(p.x, p.y)) { toast('水の上には駅を置けません'); return; }
+  if (draft.mode === 'ferry' && !nearWater(p.x, p.y, 25)) { toast('水上バスの乗り場は岸辺に置いてください'); return; }
+  if (S.stops.some(s => !s.removed && hyp(s.x, s.y, p.x, p.y) < 20)) { toast('ほかの駅に近すぎます'); return; }
+  S.stops.push({ x: Math.round(p.x), y: Math.round(p.y), name: stopName(p.x, p.y), modes: {}, planned: true });
+  S.waiting.push({});
+  const s = S.stops.length - 1;
+  draft.planned.push(s);
+  if (!draftAddStop(s)) dropPlanned(s);
+}
+function dropPlanned(s) {
+  if (s !== S.stops.length - 1 || !S.stops[s].planned) return;
+  S.stops.pop(); S.waiting.pop();
+  draft.planned = draft.planned.filter(x => x !== s);
+}
+function draftUndo() {
+  const u = draft.undo.pop();
+  if (!u) return;
+  if (u.via) draft.pending.pop();
+  else {
+    const s = draft.prepend ? draft.stops.shift() : draft.stops.pop();
+    if (draft.stops.length) draft.prepend ? draft.segs.shift() : draft.segs.pop();
+    draft.pending = u.wps;
+    draft.added--;
+    if (S.stops[s].planned) dropPlanned(s);
+  }
+  renderBuildBar();
+}
+function cancelBuild() {
+  if (!draft) return;
+  draft.planned.slice().sort((a, b) => b - a).forEach(dropPlanned);
+  draft = null;
+  renderBuildBar();
+  $('#panel').classList.remove('collapsed');
+}
+function renderBuildBar() {
+  const bar = $('#buildBar');
+  $('#mapWrap').classList.toggle('building', !!(draft || tool));
+  if (tool === 'busLane') {
+    bar.hidden = false;
+    bar.innerHTML = `<div class="info">専用レーンの工事　<b>${yen(BUS_LANE_COST * 100)}/km</b>
+      <div class="route">道路をタップすると、その区間にバス・路面電車の専用レーンを作ります（もう一度タップで撤去）。専用レーンを走る区間は渋滞の影響を受けません。</div></div>
+      <div class="row"><button class="btn primary" data-act="endTool">終わる</button></div>`;
+    return;
+  }
+  if (!draft) { bar.hidden = true; return; }
+  const M = MODES[draft.mode];
+  const info = draftInfo();
+  const ok = draft.stops.length >= 2 && draft.added > 0 && info.ok && !draft.pending.length;
+  const L = draft.lineId && lineById(draft.lineId);
+  const names = draft.stops.map(s => S.stops[s].name).join(' → ') || (M.road ? '（交差点をタップ）' : '（駅を置く場所をタップ）');
+  let warn = info.msg;
+  if (!warn && draft.pending.length) warn = `経由点 ${draft.pending.length}個。続けて次の${M.road ? '停留所' : '駅'}をタップしてください。`;
+  if (!warn && draft.via) warn = M.road ? '経由モード：タップした交差点を通りますが、停まりません。' : '経由モード：タップした地点を線路が通ります。';
+  if (!warn && draft.stops.length) warn = M.road ? '交差点をタップすると停留所になり、道路に沿って経路が引かれます。' : '空き地をタップすると駅、既存の駅をタップすると乗り入れになります。';
+  bar.hidden = false;
+  bar.innerHTML = `
+    <div class="info">${L ? `<span class="badge" style="--c:${L.color}">${L.code}</span> ${L.name} を延伸` : `${M.name}の新路線`}　建設費 <b>${yen(info.cost)}</b>${!L ? `<span class="hint">（車両2${M.unit}込み）</span>` : ''}
+      <div class="route">${names}</div>
+      <div class="route">新しい区間 ${(info.len / 100).toFixed(1)}km</div>
+      ${warn ? `<div class="route ${info.ok ? '' : 'neg'}">${warn}</div>` : ''}</div>
+    <div class="row">
+      <button class="btn ${draft.via ? 'on' : ''}" data-act="via" aria-pressed="${draft.via}">経由点</button>
+      ${L ? `<button class="btn" data-act="flip">${draft.prepend ? '終点側に延ばす' : '始点側に延ばす'}</button>` : ''}
+      <button class="btn" data-act="undo" ${draft.undo.length ? '' : 'disabled'}>1つ戻す</button>
+      <button class="btn" data-act="cancelBuild">やめる</button>
+      <button class="btn primary" data-act="commit" ${ok && info.cost <= S.money ? '' : 'disabled'}>${L ? '延伸する' : '開業する'}</button>
+    </div>`;
+}
+function commitBuild() {
+  const info = draftInfo();
+  if (!info.ok || draft.pending.length || info.cost > S.money) return;
+  const M = MODES[draft.mode];
+  S.money -= info.cost; S.today.cost += info.cost;
+  draft.segs.forEach((seg, k) => {
+    if (seg.keep) return;
+    if (M.road) { if (draft.mode === 'tram') seg.links.forEach(lk => (S.tram[lk] = true)); }
+    else {
+      const a = draft.stops[k], b = draft.stops[k + 1], key = trackKey(draft.mode, a, b);
+      if (!S.tracks[key]) S.tracks[key] = { pts: a < b ? seg.pts : seg.pts.slice().reverse() };
+    }
+  });
+  const segs = draft.segs.map(s => (M.road ? { nodes: s.nodes, links: s.links } : {}));
+  draft.stops.forEach(s => { const st = S.stops[s]; st.modes[draft.mode] = true; delete st.planned; });
+  if (draft.lineId) {
+    const L = lineById(draft.lineId);
+    const front = draft.prepend ? draft.stops.length - L.stops.length : 0;
+    L.stops = draft.stops.slice(); L.segs = segs;
+    lineGeom(L);
+    if (front) S.vehicles.filter(v => v.line === L.id).forEach(v => { v.next += front; v.pos += L._cum[front]; });
+    log(`${L.code} ${L.name}を延伸しました（${yen(info.cost)}）。`);
+  } else {
+    const n = S.lines.filter(l => l.mode === draft.mode).length + 1;
+    const used = new Set(S.lines.map(l => l.color));
+    const L = {
+      id: S.nextId++, mode: draft.mode, stops: draft.stops.slice(), segs, fareMult: 1,
+      color: LINE_COLORS.find(c => !used.has(c)) || LINE_COLORS[S.lines.length % LINE_COLORS.length],
+      code: M.code + n, name: `${S.stops[draft.stops[0]].name}〜${S.stops[draft.stops[draft.stops.length - 1]].name}${draft.mode === 'bus' ? ' 系統' : '線'}`,
+    };
+    S.lines.push(L);
+    lineGeom(L);
+    for (let k = 0; k < 2; k++) S.vehicles.push({ id: S.nextId++, line: L.id, pos: 0, dir: 1, next: 0, dwell: k * L._rt / 2, load: 0, pax: {} });
+    log(`${L.code} ${L.name}が開業しました（${yen(info.cost)}）。`);
+    selLine = L.id; tab = 'lines';
+  }
+  draft = null;
+  renderBuildBar();
+  $('#panel').classList.remove('collapsed');
+  rebuildNet();
+  checkGoals();
+  syncTabs();
+}
+function addVehicle(L) {
+  const M = MODES[L.mode];
+  if (S.money < M.vehCost) { toast('資金が足りません'); return; }
+  S.money -= M.vehCost; S.today.cost += M.vehCost;
+  const n = S.vehicles.filter(v => v.line === L.id).length;
+  S.vehicles.push({ id: S.nextId++, line: L.id, pos: 0, dir: 1, next: 0, dwell: (L._rt || 10) / (n + 1) / 2, load: 0, pax: {} });
+  rebuildNet();
+}
+function sellVehicle(L) {
+  const list = S.vehicles.filter(v => v.line === L.id);
+  if (list.length <= 1) { toast('最後の1両は売却できません'); return; }
+  const v = list.reduce((a, b) => (a.load <= b.load ? a : b));
+  S.vehicles.splice(S.vehicles.indexOf(v), 1);
+  S.money += MODES[L.mode].vehCost * 0.5;
+  rebuildNet();
+}
+function removeLine(L) {
+  const back = S.vehicles.filter(v => v.line === L.id).length * MODES[L.mode].vehCost * 0.5;
+  S.vehicles = S.vehicles.filter(v => v.line !== L.id);
+  S.lines = S.lines.filter(l => l !== L);
+  S.money += back;
+  log(`${L.code} ${L.name}を廃止しました。車両売却益 ${yen(back)}。`);
+  selLine = null;
+  rebuildNet();
+}
+function toggleBusLane(k) {
+  const l = MAP.links[k];
+  if (S.busLane[k]) { delete S.busLane[k]; toast('専用レーンを撤去しました'); }
+  else {
+    const c = l.len * BUS_LANE_COST;
+    if (S.money < c) { toast('資金が足りません'); return; }
+    // 専用レーンを作ると一般車の車線が減る
+    S.money -= c; S.today.cost += c; S.busLane[k] = true;
+    toast(`専用レーンを作りました（${yen(c)}）`);
+  }
+  MAP.links[k].cap = (l.art ? 1500 : 500) * (S.busLane[k] ? 0.7 : 1);
+  rebuildNet();
+}
+function applyLanes() { MAP.links.forEach((l, k) => (l.cap = (l.art ? 1500 : 500) * (S.busLane[k] ? 0.7 : 1))); }
+
+// ===== 描画 =====
+const cv = $('#map'), ctx = cv.getContext('2d');
+let dpr = 1, CW = 0, CH = 0;
+const COL = {};
+function readColors() {
+  const cs = getComputedStyle(document.documentElement);
+  ['bg', 'board', 'fg', 'muted', 'led', 'good', 'warn', 'bad', 'land', 'block-res', 'block-com', 'block-off', 'block-ind', 'block-park', 'water', 'road', 'road-art', 'rule'].forEach(k => (COL[k] = cs.getPropertyValue('--' + k).trim()));
+}
+let base;
+// 地面・水・街区の建物を一度だけ描いておく
+function buildBase() {
+  const sc = 1.5;
+  base = document.createElement('canvas');
+  base.width = W * sc; base.height = H * sc;
+  const g = base.getContext('2d');
+  g.scale(sc, sc);
+  g.fillStyle = COL.land; g.fillRect(0, 0, W, H);
+  const rand = rng(SEED + 7);
+  const tc = { res: COL['block-res'], com: COL['block-com'], off: COL['block-off'], ind: COL['block-ind'], park: COL['block-park'] };
+  MAP.blocks.forEach((b, i) => {
+    g.fillStyle = tc[b.type];
+    g.globalAlpha = 0.55;
+    g.fillRect(b.x - 42, b.y - 42, 84, 84);
+    g.globalAlpha = 1;
+    // 建物：人口と職場が多いほど密に、高い建物ほど明るく
+    const dens = (S.pop[i][0] + S.pop[i][1]) / 6000;
+    const n = b.type === 'park' ? 0 : Math.round(4 + dens * 20);
+    for (let k = 0; k < n; k++) {
+      const w = 6 + rand() * (b.type === 'ind' ? 22 : 12), h = 6 + rand() * (b.type === 'ind' ? 16 : 12);
+      const x = b.x - 38 + rand() * (76 - w), y = b.y - 38 + rand() * (76 - h);
+      const lum = b.type === 'off' ? 0.55 + rand() * 0.3 : 0.25 + rand() * 0.25 + dens * 0.1;
+      g.fillStyle = `rgba(210,222,236,${Math.min(0.85, lum)})`;
+      g.fillRect(x, y, w, h);
+    }
+    if (b.type === 'park') {
+      g.fillStyle = 'rgba(90,160,100,0.5)';
+      for (let k = 0; k < 14; k++) { g.beginPath(); g.arc(b.x - 34 + rand() * 68, b.y - 34 + rand() * 68, 3 + rand() * 4, 0, 7); g.fill(); }
+    }
+  });
+  g.fillStyle = COL.water;
+  g.beginPath(); BAY.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.fill();
+  g.strokeStyle = COL.water; g.lineWidth = RIVER_HALF * 2; g.lineCap = 'round'; g.lineJoin = 'round';
+  g.beginPath(); RIVER.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke();
+  g.fillStyle = 'rgba(160,190,220,0.35)'; g.font = '14px sans-serif'; g.textAlign = 'center';
+  g.fillText('みなと川', 640, 250); g.fillText('みなと湾', 1450, 900);
+  MAP.exts.forEach(e => {
+    g.fillStyle = 'rgba(255,181,71,0.12)';
+    g.beginPath(); g.arc(e.x, e.y, 90, 0, 7); g.fill();
+  });
+}
+function resize() {
+  const r = cv.getBoundingClientRect();
+  dpr = window.devicePixelRatio || 1;
+  CW = r.width; CH = r.height;
+  cv.width = Math.round(CW * dpr); cv.height = Math.round(CH * dpr);
+}
+function fitView() {
+  const s = Math.min(CW / (W + 20), CH / (H + 20));
+  view.s = s; view.x = (CW - W * s) / 2; view.y = (CH - H * s) / 2;
+}
+function zoomAt(f, sx, sy) {
+  const ns = Math.max(0.15, Math.min(6, view.s * f));
+  view.x = sx - (sx - view.x) * ns / view.s;
+  view.y = sy - (sy - view.y) * ns / view.s;
+  view.s = ns;
+}
+const toWorld = (sx, sy) => ({ x: (sx - view.x) / view.s, y: (sy - view.y) / view.s });
+function jamColor(vc) { return vc < 0.6 ? COL.good : vc < 0.9 ? COL.warn : COL.bad; }
+function nearestNode(p, r) {
+  let best = -1, bd = r;
+  MAP.nodes.forEach((n, i) => { const d = hyp(n.x, n.y, p.x, p.y); if (d < bd) { bd = d; best = i; } });
+  return best;
+}
+function nearestStop(p, r, filter) {
+  let best = -1, bd = r;
+  S.stops.forEach((s, i) => { if (s.removed || (filter && !filter(i))) return; const d = hyp(s.x, s.y, p.x, p.y); if (d < bd) { bd = d; best = i; } });
+  return best;
+}
+function nearestLink(p, r) {
+  let best = -1, bd = r;
+  MAP.links.forEach((l, k) => {
+    const A = MAP.nodes[l.a], B = MAP.nodes[l.b];
+    const d = distToPolyline(p.x, p.y, [[A.x, A.y], [B.x, B.y]]);
+    if (d < bd) { bd = d; best = k; }
+  });
+  return best;
+}
+const segKeyStops = (a, b) => (a < b ? a + '-' + b : b + '-' + a);
+let laneMap = {};
+function computeLanes() {
+  laneMap = {};
+  S.lines.forEach(L => { for (let k = 1; k < L.stops.length; k++) { const key = segKeyStops(L.stops[k - 1], L.stops[k]); (laneMap[key] = laneMap[key] || []).push(L.id); } });
+}
+function laneOffset(L, k) {
+  const a = L.stops[k], b = L.stops[k + 1];
+  const arr = laneMap[segKeyStops(a, b)] || [L.id];
+  const n = arr.length, idx = Math.max(0, arr.indexOf(L.id));
+  return (idx - (n - 1) / 2) * 6 / view.s * (a < b ? 1 : -1) + (MODES[L.mode].road ? 5 / view.s * (a < b ? 1 : -1) : 0);
+}
+function offsetPts(pts, off) {
+  if (!off) return pts;
+  return pts.map((p, j) => {
+    const a = pts[Math.max(0, j - 1)], b = pts[Math.min(pts.length - 1, j + 1)];
+    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+    return { x: p.x - dy / len * off, y: p.y + dx / len * off };
+  });
+}
+function strokePath(pts, mode, color, alpha) {
+  const px = 1 / view.s;
+  ctx.globalAlpha = alpha;
+  ctx.beginPath();
+  pts.forEach((p, j) => (j ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  ctx.strokeStyle = color; ctx.lineWidth = MODES[mode].w * px;
+  ctx.setLineDash(mode === 'metro' ? [10 * px, 4 * px] : mode === 'ferry' ? [3 * px, 5 * px] : []);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+}
+function vehPoint(L, pos) {
+  const cum = L._cum;
+  let k = 0;
+  while (k < cum.length - 2 && pos > cum[k + 1]) k++;
+  const seg = L._segs[k].pts;
+  let j = 0;
+  while (j < seg.length - 2 && pos > seg[j + 1].d) j++;
+  const a = seg[j], b = seg[j + 1];
+  const f = Math.max(0, Math.min(1, (pos - a.d) / ((b.d - a.d) || 1)));
+  const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, off = laneOffset(L, k);
+  return { x: a.x + dx * f - dy / len * off, y: a.y + dy * f + dx / len * off, ang: Math.atan2(dy, dx) };
+}
+let animT = 0;
+function draw() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = COL.water; ctx.fillRect(0, 0, CW, CH);
+  ctx.save();
+  ctx.translate(view.x, view.y); ctx.scale(view.s, view.s);
+  const px = 1 / view.s;
+  ctx.drawImage(base, 0, 0, W, H);
+  if (layer === 'people') {
+    const maxv = 9000;
+    MAP.blocks.forEach((b, i) => {
+      const r = S.pop[i][0], j = S.pop[i][1];
+      ctx.fillStyle = `rgba(79,209,139,${Math.min(0.85, r / maxv * 1.6)})`; ctx.fillRect(b.x - 42, b.y - 42, 42, 84);
+      ctx.fillStyle = `rgba(92,124,250,${Math.min(0.85, j / maxv * 1.6)})`; ctx.fillRect(b.x, b.y - 42, 42, 84);
+    });
+  }
+  // 道路
+  ctx.lineCap = 'round';
+  const dim = layer === 'traffic' ? 1 : 0.9;
+  MAP.links.forEach((l, k) => {
+    const A = MAP.nodes[l.a], B = MAP.nodes[l.b];
+    const vc = S.ema[k] / l.cap;
+    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y);
+    ctx.strokeStyle = layer === 'traffic' ? jamColor(vc) : (l.art ? COL['road-art'] : COL.road);
+    ctx.globalAlpha = dim;
+    ctx.lineWidth = (l.art ? 9 : 5) * (layer === 'traffic' ? 0.9 : 1);
+    ctx.stroke();
+    if (l.bridge && layer !== 'traffic') { ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = (l.art ? 13 : 8); ctx.globalAlpha = 0.6; ctx.stroke(); }
+    ctx.globalAlpha = 1;
+    if (S.busLane[k]) { ctx.strokeStyle = 'rgba(214,92,64,0.9)'; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke(); }
+    if (S.tram[k]) { ctx.strokeStyle = 'rgba(230,236,245,0.7)'; ctx.lineWidth = 1; ctx.setLineDash([2, 2]); ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke(); ctx.setLineDash([]); }
+  });
+  // 走っている車（交通量に応じた数の点）
+  if (view.s > 0.35) {
+    ctx.fillStyle = layer === 'traffic' ? 'rgba(255,255,255,0.8)' : 'rgba(255,230,190,0.75)';
+    MAP.links.forEach((l, k) => {
+      const n = Math.min(10, Math.round(S.ema[k] / 140));
+      if (!n) return;
+      const A = MAP.nodes[l.a], B = MAP.nodes[l.b];
+      const sp = l.len / (ROAD ? ROAD.lt[k] : l.t0);
+      const dx = (B.x - A.x) / l.len, dy = (B.y - A.y) / l.len;
+      for (let c = 0; c < n; c++) {
+        const fwd = c % 2 === 0;
+        let d = ((animT * sp * 0.25 + c * l.len / n + k * 13) % l.len);
+        if (!fwd) d = l.len - d;
+        const o = (fwd ? 1.8 : -1.8);
+        ctx.fillRect(A.x + dx * d - dy * o - 1.2, A.y + dy * d + dx * o - 1.2, 2.4, 2.4);
+      }
+    });
+  }
+  // 路線
+  S.lines.forEach(L => {
+    const dimL = selLine && selLine !== L.id && tab === 'lines' ? 0.3 : 1;
+    L._segs.forEach((seg, k) => strokePath(offsetPts(seg.pts, laneOffset(L, k)), L.mode, L.color, dimL));
+  });
+  if (draft) drawDraft();
+  // 停留所・駅
+  const font = (sz, w) => `${w || 500} ${sz * px}px ${getComputedStyle(document.body).fontFamily}`;
+  S.stops.forEach((s, i) => {
+    if (s.removed) return;
+    const modes = stopModes(s);
+    const served = S.lines.some(L => L.stops.includes(i));
+    if (!served && !s.planned) return;
+    const big = modes.some(m => !MODES[m].road);
+    const r = (big ? 7 : 4.5) * px;
+    if (sel && sel.kind === 'stop' && sel.id === i) { ctx.strokeStyle = COL.led; ctx.lineWidth = 2 * px; ctx.beginPath(); ctx.arc(s.x, s.y, r + 6 * px, 0, 7); ctx.stroke(); }
+    const ratio = served ? Math.min(1, waitTotal(i) / stopCap(i)) : 0;
+    if (ratio > 0.03) {
+      ctx.strokeStyle = ratio > 0.8 ? COL.bad : COL.led; ctx.lineWidth = 2.5 * px;
+      ctx.beginPath(); ctx.arc(s.x, s.y, r + 3 * px, -Math.PI / 2, -Math.PI / 2 + ratio * Math.PI * 2); ctx.stroke();
+    }
+    ctx.fillStyle = s.planned ? COL.bg : '#ffffff';
+    ctx.strokeStyle = s.planned ? COL.led : '#0c1219';
+    ctx.lineWidth = 2 * px;
+    if (s.planned) ctx.setLineDash([3 * px, 2 * px]);
+    ctx.beginPath();
+    if (big) ctx.arc(s.x, s.y, r, 0, 7); else ctx.rect(s.x - r, s.y - r, r * 2, r * 2);
+    ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+    if (view.s > 0.7 || big) {
+      ctx.font = font(big ? 11 : 10, big ? 700 : 500);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.lineWidth = 3 * px; ctx.strokeStyle = 'rgba(8,12,20,0.85)';
+      ctx.strokeText(s.name, s.x, s.y + r + 3 * px);
+      ctx.fillStyle = COL.fg; ctx.fillText(s.name, s.x, s.y + r + 3 * px);
+    }
+  });
+  // 車両
+  S.vehicles.forEach(v => {
+    const L = lineById(v.line);
+    if (!L || !L._segs.length) return;
+    const M = MODES[L.mode], p = vehPoint(L, v.pos);
+    const len = ({ bus: 9, tram: 13, metro: 18, rail: 20, ferry: 10 })[L.mode] * px, wd = (L.mode === 'bus' || L.mode === 'ferry' ? 5 : 6) * px;
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.ang);
+    ctx.fillStyle = '#0c1219'; ctx.fillRect(-len / 2 - px, -wd / 2 - px, len + 2 * px, wd + 2 * px);
+    ctx.fillStyle = L.color; ctx.fillRect(-len / 2, -wd / 2, len, wd);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fillRect(-len / 2 + px, -wd / 2 + px, (len - 2 * px) * Math.min(1, v.load / M.cap), wd - 2 * px);
+    ctx.restore();
+  });
+  // 郊外の名前
+  ctx.font = font(12, 700); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  MAP.exts.forEach((e, i) => {
+    const x = Math.max(60, Math.min(W - 60, e.x)), y = Math.max(20, Math.min(H - 20, e.y + (e.y < 50 ? 30 : -30)));
+    ctx.fillStyle = S.ext[i].served ? COL.good : COL.led;
+    ctx.fillText(`${e.name}${S.ext[i].served ? '（鉄道あり）' : ''}`, x, y);
+  });
+  // 収入の浮き文字
+  ctx.font = font(11, 700);
+  FX.forEach(f => { ctx.globalAlpha = Math.max(0, f.life); ctx.fillStyle = COL.good; ctx.fillText(f.text, f.x, f.y - (1 - f.life) * 26 * px - 16 * px); });
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+function drawDraft() {
+  const px = 1 / view.s, M = MODES[draft.mode];
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (let k = 1; k < draft.stops.length; k++) {
+    const seg = draft.segs[k - 1];
+    if (!seg || seg.keep) continue;
+    let pts;
+    if (M.road) pts = seg.nodes.map(n => MAP.nodes[n]);
+    else pts = [S.stops[draft.stops[k - 1]], ...seg.pts, S.stops[draft.stops[k]]];
+    const ok = segInfo(draft.mode, draft.stops[k - 1], draft.stops[k], seg).ok;
+    strokePath(pts, draft.mode, ok ? COL.led : COL.bad, 0.95);
+  }
+  if (draft.pending.length && draft.stops.length) {
+    const end = S.stops[draft.prepend ? draft.stops[0] : draft.stops[draft.stops.length - 1]];
+    ctx.beginPath(); ctx.moveTo(end.x, end.y);
+    draft.pending.forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.strokeStyle = COL.led; ctx.lineWidth = 2 * px; ctx.setLineDash([5 * px, 5 * px]); ctx.stroke(); ctx.setLineDash([]);
+    draft.pending.forEach(p => { ctx.fillStyle = '#0c1219'; ctx.fillRect(p.x - 4 * px, p.y - 4 * px, 8 * px, 8 * px); ctx.strokeStyle = COL.led; ctx.lineWidth = 2 * px; ctx.strokeRect(p.x - 4 * px, p.y - 4 * px, 8 * px, 8 * px); });
+  }
+  if (M.road && view.s > 0.3) {
+    ctx.fillStyle = 'rgba(255,181,71,0.35)';
+    MAP.nodes.forEach(n => ctx.fillRect(n.x - 3 * px, n.y - 3 * px, 6 * px, 6 * px));
+  }
+}
+function renderLegend() {
+  const el = $('#legend');
+  if (layer === 'traffic') { el.hidden = false; el.innerHTML = `<span><i style="background:${COL.good}"></i>流れている</span><span><i style="background:${COL.warn}"></i>混雑</span><span><i style="background:${COL.bad}"></i>渋滞</span>`; }
+  else if (layer === 'people') { el.hidden = false; el.innerHTML = `<span><i style="background:rgba(79,209,139,0.9)"></i>住む人（左半分）</span><span><i style="background:rgba(92,124,250,0.9)"></i>働く人（右半分）</span>`; }
+  else el.hidden = true;
+}
+
+// ===== 入力 =====
+const pointers = new Map();
+let dragInfo = null;
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+  if (pointers.size === 1) dragInfo = { sx: e.offsetX, sy: e.offsetY, vx: view.x, vy: view.y, moved: false };
+  else if (pointers.size === 2) { const [a, b] = [...pointers.values()]; dragInfo = { pinch: Math.hypot(a.x - b.x, a.y - b.y), s: view.s, moved: true }; }
+});
+cv.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+  if (!dragInfo) return;
+  if (pointers.size === 2 && dragInfo.pinch) {
+    const [a, b] = [...pointers.values()];
+    zoomAt((dragInfo.s * Math.hypot(a.x - b.x, a.y - b.y) / dragInfo.pinch) / view.s, (a.x + b.x) / 2, (a.y + b.y) / 2);
+  } else if (pointers.size === 1 && !dragInfo.pinch) {
+    const dx = e.offsetX - dragInfo.sx, dy = e.offsetY - dragInfo.sy;
+    if (Math.hypot(dx, dy) > 6) dragInfo.moved = true;
+    if (dragInfo.moved) { view.x = dragInfo.vx + dx; view.y = dragInfo.vy + dy; }
+  }
+});
+function endPointer(e) {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.delete(e.pointerId);
+  if (pointers.size === 0) { if (dragInfo && !dragInfo.moved) tapAt(e.offsetX, e.offsetY); dragInfo = null; }
+}
+cv.addEventListener('pointerup', endPointer);
+cv.addEventListener('pointercancel', endPointer);
+cv.addEventListener('wheel', e => { e.preventDefault(); zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.offsetX, e.offsetY); }, { passive: false });
+$('#zIn').onclick = () => zoomAt(1.3, CW / 2, CH / 2);
+$('#zOut').onclick = () => zoomAt(1 / 1.3, CW / 2, CH / 2);
+$('#zFit').onclick = fitView;
+$('#layers').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  layer = b.dataset.layer; syncLayers();
+});
+function syncLayers() { document.querySelectorAll('#layers button').forEach(b => b.classList.toggle('on', b.dataset.layer === layer)); renderLegend(); }
+
+function tapAt(sx, sy) {
+  if (draft) { draftTap(sx, sy); return; }
+  const p = toWorld(sx, sy);
+  if (tool === 'busLane') {
+    const k = nearestLink(p, 16 / view.s);
+    if (k >= 0) toggleBusLane(k);
+    return;
+  }
+  const s = nearestStop(p, 16 / view.s, i => S.lines.some(L => L.stops.includes(i)));
+  if (s >= 0) sel = { kind: 'stop', id: s };
+  else {
+    const k = nearestLink(p, 8 / view.s);
+    if (k >= 0) sel = { kind: 'link', id: k };
+    else {
+      const b = MAP.blocks.findIndex(b => Math.abs(b.x - p.x) < 50 && Math.abs(b.y - p.y) < 50);
+      sel = b >= 0 ? { kind: 'block', id: b } : null;
+    }
+  }
+  tab = 'info';
+  $('#panel').classList.remove('collapsed');
+  syncTabs();
+}
+
+$('#speedBtns').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; speed = +b.dataset.speed; syncSpeed(); });
+function syncSpeed() { document.querySelectorAll('#speedBtns button').forEach(b => b.classList.toggle('on', +b.dataset.speed === speed)); }
+$('#tabs').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const panel = $('#panel');
+  if (b.dataset.tab === tab) { panel.classList.toggle('collapsed'); return; }
+  panel.classList.remove('collapsed');
+  tab = b.dataset.tab;
+  if (tab !== 'lines') selLine = null;
+  syncTabs();
+});
+function syncTabs() {
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  pendingConfirm = null;
+  renderPanel();
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (!b || b.disabled) return;
+  const act = b.dataset.act;
+  const L = b.dataset.line ? lineById(+b.dataset.line) : null;
+  if ({ removeLine: 1, reset: 1 }[act] && pendingConfirm !== act + (L ? L.id : '')) { pendingConfirm = act + (L ? L.id : ''); renderPanel(); return; }
+  pendingConfirm = null;
+  switch (act) {
+    case 'openLine': selLine = +b.dataset.line; tab = 'lines'; syncTabs(); return;
+    case 'back': selLine = null; break;
+    case 'build': cancelBuild(); startBuild(b.dataset.mode); break;
+    case 'extend': cancelBuild(); startBuild(L.mode, L.id); break;
+    case 'via': draft.via = !draft.via; renderBuildBar(); return;
+    case 'flip': if (draft.pending.length) { toast('経由点を置いている途中は切り替えられません'); return; } draft.prepend = !draft.prepend; renderBuildBar(); return;
+    case 'undo': draftUndo(); return;
+    case 'cancelBuild': cancelBuild(); return;
+    case 'commit': commitBuild(); return;
+    case 'busLane': cancelBuild(); tool = 'busLane'; layer = 'traffic'; syncLayers(); renderBuildBar(); if (window.innerWidth < 900) $('#panel').classList.add('collapsed'); return;
+    case 'endTool': tool = null; renderBuildBar(); $('#panel').classList.remove('collapsed'); return;
+    case 'addVeh': addVehicle(L); break;
+    case 'sellVeh': sellVehicle(L); break;
+    case 'removeLine': removeLine(L); break;
+    case 'lineColor': L.color = b.dataset.color; break;
+    case 'renameLine': { const v = cleanName(document.getElementById('lname').value); if (v) { L.name = v; toast('路線名を変更しました'); } break; }
+    case 'renameStop': { const v = cleanName(document.getElementById('sname').value); if (v) { S.stops[sel.id].name = v; toast('名前を変更しました'); } break; }
+    case 'stopLine': selLine = +b.dataset.line; tab = 'lines'; syncTabs(); return;
+    case 'borrow': S.loan += 1e9; S.money += 1e9; log('銀行から10億円を借り入れました（日利0.02%）。'); break;
+    case 'repay': if (S.money >= 1e9 && S.loan >= 1e9) { S.loan -= 1e9; S.money -= 1e9; log('借入金を10億円返済しました。'); } break;
+    case 'save': save(); toast('保存しました'); break;
+    case 'reset': try { localStorage.removeItem(SAVE_KEY); } catch (err) { /* 何もしない */ } newRun(); return;
+    case 'help': showHelp(); return;
+    case 'closeOverlay': $('#overlay').hidden = true; return;
+  }
+  renderPanel();
+});
+document.addEventListener('input', e => {
+  if (e.target.id === 'fare') {
+    const L = lineById(selLine);
+    L.fareMult = +e.target.value / 100;
+    const out = document.getElementById('fareOut');
+    if (out) out.textContent = yen(MODES[L.mode].fare * L.fareMult);
+  }
+});
+document.addEventListener('change', e => { if (e.target.id === 'fare') rebuildNet(); });
+
+// ===== パネル =====
+function lineStats(L) {
+  const vs = S.vehicles.filter(v => v.line === L.id), M = MODES[L.mode];
+  return { n: vs.length, load: vs.length ? vs.reduce((a, v) => a + v.load, 0) / (vs.length * M.cap) : 0, up: vs.length * M.vehUp };
+}
+function renderPanel() {
+  dirtyPanel = false;
+  const body = $('#panelBody');
+  let h = '';
+  if (tab === 'lines') h = linesHtml();
+  else if (tab === 'build') h = buildHtml();
+  else if (tab === 'info') h = infoHtml();
+  else if (tab === 'traffic') h = trafficHtml();
+  else if (tab === 'money') h = moneyHtml();
+  else if (tab === 'log') h = logHtml();
+  body.innerHTML = h;
+  if (tab === 'traffic') drawChart('chartShare', S.hist.map(d => d.share * 100), COL.good, v => v.toFixed(0) + '%');
+  if (tab === 'money') drawMoneyChart();
+}
+function linesHtml() {
+  const L = selLine && lineById(selLine);
+  if (L) {
+    const M = MODES[L.mode], st = lineStats(L);
+    const conf = pendingConfirm === 'removeLine' + L.id;
+    return `<div class="row"><button class="btn" data-act="back">← 一覧</button><h3><span class="badge" style="--c:${L.color}">${L.code}</span> ${L.name}</h3></div>
+      <dl class="kv">
+        <dt>種別</dt><dd>${M.name}（定員${M.cap}人）</dd>
+        <dt>停留所</dt><dd>${L.stops.map(s => S.stops[s].name).join('・')}</dd>
+        <dt>路線長</dt><dd class="num">${(L._len / 100).toFixed(1)} km</dd>
+        <dt>片道の所要</dt><dd><span class="num">${Math.round(L._rt / 2)}</span>分${M.road ? `（渋滞がなければ ${Math.round(L._segs.reduce((a, s) => a + s.len, 0) / M.speed + (L.stops.length - 1) * M.dwell)}分）` : ''}</dd>
+        <dt>運行間隔</dt><dd><span class="num">${isFinite(L._headway) ? Math.round(L._headway) : '—'}</span>分ごと（${st.n}${M.unit}）</dd>
+        <dt>乗車率</dt><dd><div class="bar"><i style="width:${Math.round(st.load * 100)}%"></i></div></dd>
+        <dt>今日の利用</dt><dd><span class="num">${man(L.rides || 0)}</span>人 ／ 昨日 <span class="num">${man(L.ridesY || 0)}</span>人</dd>
+        <dt>今日の運賃収入</dt><dd class="num pos">${yen(L.rev || 0)}</dd>
+        <dt>車両の維持費</dt><dd class="num">${yen(st.up)}/日</dd>
+      </dl>
+      <div><label for="fare" class="hint">運賃 <b id="fareOut" class="num">${yen(M.fare * L.fareMult)}</b>　安いほど車から乗り換える人が増えます</label>
+        <input type="range" id="fare" min="0" max="200" step="10" value="${Math.round(L.fareMult * 100)}"></div>
+      <div class="row">
+        <button class="btn primary" data-act="addVeh" data-line="${L.id}" ${S.money >= M.vehCost ? '' : 'disabled'}>車両を追加 ${yen(M.vehCost)}</button>
+        <button class="btn" data-act="sellVeh" data-line="${L.id}">車両を売却</button>
+        <button class="btn" data-act="extend" data-line="${L.id}">延伸する</button>
+        <button class="btn danger" data-act="removeLine" data-line="${L.id}">${conf ? 'もう一度押すと廃止' : '廃止'}</button>
+      </div>
+      <details><summary class="hint">名前と色を変える</summary>
+        <div class="list" style="margin-top:10px">
+          <div class="row"><input type="text" id="lname" class="txt" maxlength="16" value="${L.name}" aria-label="路線名"><button class="btn" data-act="renameLine" data-line="${L.id}">変更</button></div>
+          <div class="row">${LINE_COLORS.map(c => `<button class="swatch ${c === L.color ? 'on' : ''}" style="--c:${c}" data-act="lineColor" data-line="${L.id}" data-color="${c}" aria-label="色 ${c}"></button>`).join('')}</div>
+        </div></details>`;
+  }
+  if (!S.lines.length) return `<h3>まだ路線がありません</h3>
+    <p class="hint">「渋滞」ボタンで道路の混み具合を見て、混んでいる道に沿ってバスを走らせてみましょう。川を渡る橋と都心が特に混みます。</p>
+    <div class="row"><button class="btn primary" data-act="build" data-mode="bus">バス路線を作る</button><button class="btn" data-act="build" data-mode="metro">地下鉄を作る</button></div>`;
+  let h = `<div class="row" style="justify-content:space-between"><h3>運行中の路線 ${S.lines.length}</h3></div><div class="list">`;
+  S.lines.forEach(L => {
+    const st = lineStats(L), M = MODES[L.mode];
+    h += `<button class="item" data-act="openLine" data-line="${L.id}"><span class="badge" style="--c:${L.color}">${L.code}</span>
+      <span><div class="nm">${L.name}</div><div class="sub">${M.name}・${st.n}${M.unit}・${isFinite(L._headway) ? Math.round(L._headway) + '分間隔' : ''}・乗車率 ${Math.round(st.load * 100)}%</div></span>
+      <span class="num">${man(L.rides || 0)}人</span></button>`;
+  });
+  return h + '</div>';
+}
+function buildHtml() {
+  let h = `<p class="hint">交通手段を選んで地図をタップします。バスと路面電車は交差点をタップすると停留所になり、道路に沿って自動で経路が引かれます。地下鉄・鉄道・水上バスは好きな場所に駅を置けます。「経由点」で通り道を指定できます。</p><div class="cards">`;
+  Object.values(MODES).forEach(M => {
+    h += `<div class="card2"><div class="top"><h3>${M.name}</h3><button class="btn primary" data-act="build" data-mode="${M.key}">作る</button></div>
+      <div class="spec">${MODE_NOTE[M.key]}<br>定員 ${M.cap}人・時速${Math.round(M.speed * 0.6)}km・運賃 ${M.fare}円<br>
+      ${M.key === 'bus' ? '停留所' : '駅'} ${yen(M.stopCost)}${M.segCost ? `・線路 ${yen(M.segCost * 100)}/km` : ''}・車両 ${yen(M.vehCost)}（維持 ${yen(M.vehUp)}/日）</div></div>`;
+  });
+  h += `<div class="card2"><div class="top"><h3>バス専用レーン</h3><button class="btn" data-act="busLane">工事する</button></div>
+    <div class="spec">道路の区間ごとに作れます。バスと路面電車がその区間で渋滞に巻き込まれなくなります。そのかわり車の通れる量が3割減ります。${yen(BUS_LANE_COST * 100)}/km</div></div></div>`;
+  return h;
+}
+function infoHtml() {
+  if (!sel) return '<p class="hint">地図の停留所・道路・街区をタップすると、ここに詳しい情報が出ます。</p>';
+  if (sel.kind === 'stop') {
+    const i = sel.id, s = S.stops[i], lines = S.lines.filter(L => L.stops.includes(i));
+    const w = S.waiting[i], wt = waitTotal(i), cap = stopCap(i);
+    const dests = Object.keys(w).map(k => [+k, w[k]]).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    let h = `<h3>${s.name}</h3><p class="hint">${stopModes(s).map(m => MODES[m].name).join('・')}の${s.node !== undefined ? '停留所' : '駅'}</p>
+      <div class="row"><input type="text" id="sname" class="txt" maxlength="16" value="${s.name}" aria-label="名前"><button class="btn" data-act="renameStop">名前を変更</button></div>
+      <dl class="kv"><dt>乗り入れ</dt><dd>${lines.map(L => `<button class="btn" data-act="stopLine" data-line="${L.id}"><span class="badge" style="--c:${L.color}">${L.code}</span></button>`).join(' ')}</dd>
+      <dt>待っている人</dt><dd><span class="num ${wt / cap > 0.8 ? 'neg' : ''}">${Math.round(wt)}</span> / ${cap}人<div class="bar"><i style="width:${Math.min(100, wt / cap * 100)}%"></i></div></dd></dl>`;
+    if (dests.length) { h += '<div class="list"><span class="hint">行き先の多い順</span>'; dests.forEach(([d, n]) => (h += `<div class="row" style="justify-content:space-between"><span>${S.stops[d].name}</span><span class="num">${n}人</span></div>`)); h += '</div>'; }
+    if (wt / cap > 0.8) h += '<p class="hint neg">混雑しています。あふれた人はあきらめて帰り、市民の満足度が下がります。車両を増やしましょう。</p>';
+    return h;
+  }
+  if (sel.kind === 'link') {
+    const l = MAP.links[sel.id], vc = S.ema[sel.id] / l.cap;
+    const tt = ROAD ? ROAD.lt[sel.id] : l.t0;
+    return `<h3>${l.bridge ? '橋' : l.art ? '幹線道路' : '生活道路'}</h3>
+      <dl class="kv"><dt>交通量</dt><dd><span class="num">${Math.round(S.ema[sel.id])}</span>台/時（容量 ${Math.round(l.cap)}台/時）</dd>
+      <dt>混み具合</dt><dd class="${vc < 0.6 ? 'pos' : vc < 0.9 ? 'wrn' : 'neg'}">${vc < 0.6 ? '流れている' : vc < 0.9 ? '混雑' : '渋滞'}（${Math.round(vc * 100)}%）</dd>
+      <dt>通過時間</dt><dd>${(tt * 60).toFixed(0)}秒（空いていれば ${(l.t0 * 60).toFixed(0)}秒）</dd>
+      <dt>専用レーン</dt><dd>${S.busLane[sel.id] ? 'あり' : 'なし'}</dd><dt>路面電車の線路</dt><dd>${S.tram[sel.id] ? 'あり' : 'なし'}</dd></dl>
+      <p class="hint">「建設」タブの「バス専用レーン」で、この区間にレーンを作れます。</p>`;
+  }
+  const b = MAP.blocks[sel.id], p = S.pop[sel.id];
+  const tn = { res: '住宅地', com: '商業地', off: 'オフィス街', ind: '工業地', park: '公園' }[b.type];
+  const acc = (b._acc || []).map(a => S.stops[a.s].name);
+  return `<h3>${b.district}の${tn}</h3>
+    <dl class="kv"><dt>住んでいる人</dt><dd class="num">${Math.round(p[0]).toLocaleString()}人</dd><dt>働いている人</dt><dd class="num">${Math.round(p[1]).toLocaleString()}人</dd>
+    <dt>歩いて行ける駅・停留所</dt><dd>${acc.length ? acc.join('・') : '<span class="neg">なし（900m以内に乗り場がない）</span>'}</dd></dl>
+    ${b.type === 'off' ? '<p class="hint">オフィス街は駐車場探しに時間がかかるので、公共交通があれば乗り換える人が多い場所です。</p>' : ''}`;
+}
+function tile(lbl, v, s, cls) { return `<div class="tile"><span class="lbl">${lbl}</span><span class="v ${cls || ''}">${v}</span><span class="s">${s}</span></div>`; }
+function trafficHtml() {
+  const y = S.yday, t = S.today;
+  const share = t.trips ? t.transit / Math.max(1, t.transit + t.car + t.stranded) : 0;
+  const jamNow = t.jamN ? Math.round(t.jamSum / t.jamN * 100) : y.jam;
+  const worst = MAP.links.map((l, k) => [k, S.ema[k] / l.cap]).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const satC = S.sat >= 60 ? 'pos' : S.sat >= 40 ? 'wrn' : 'neg';
+  return `<div class="tiles">
+      ${tile('公共交通の分担率', pct(share), `昨日 ${pct(y.share)}`)}
+      ${tile('渋滞度', jamNow, `昨日 ${y.jam}（0〜100、低いほどよい）`, jamNow > 60 ? 'neg' : jamNow > 35 ? 'wrn' : 'pos')}
+      ${tile('平均通勤時間', (t.trips ? t.timeSum / t.trips : y.avgT).toFixed(1) + '分', `昨日 ${y.avgT.toFixed(1)}分`)}
+      ${tile('市民の満足度', Math.round(S.sat), '通勤時間と移動できなかった人で決まる', satC)}
+    </div>
+    <dl class="kv"><dt>今日の移動</dt><dd class="num">${man(t.trips)}回</dd><dt>公共交通</dt><dd class="num">${man(t.transit)}回</dd><dt>車</dt><dd class="num">${man(t.car)}回</dd>
+    <dt>移動できなかった人</dt><dd class="num ${t.stranded + t.lost > 0 ? 'neg' : ''}">${man(t.stranded + t.lost)}人</dd></dl>
+    <p class="hint">車を持たない人（約30%）は、近くに乗り場がないと移動できません。駅があふれて帰った人もここに入ります。</p>
+    <div><span class="hint">公共交通の分担率の推移（日ごと）</span><canvas id="chartShare" class="chart"></canvas></div>
+    <div class="list"><span class="hint">いま一番混んでいる道路</span>${worst.map(([k, vc]) => `<div class="row" style="justify-content:space-between"><span>${MAP.links[k].bridge ? '橋' : MAP.links[k].art ? '幹線道路' : '生活道路'}（${MAP.blocks.reduce((a, c) => (hyp(c.x, c.y, MAP.nodes[MAP.links[k].a].x, MAP.nodes[MAP.links[k].a].y) < hyp(a.x, a.y, MAP.nodes[MAP.links[k].a].x, MAP.nodes[MAP.links[k].a].y) ? c : a)).district}付近）</span><span class="num ${vc > 0.9 ? 'neg' : 'wrn'}">${Math.round(vc * 100)}%</span></div>`).join('')}</div>`;
+}
+function moneyHtml() {
+  const t = S.today, up = dailyUpkeep();
+  return `<dl class="kv">
+      <dt>資金</dt><dd class="num ${S.money < 0 ? 'neg' : ''}">${yen(S.money)}</dd>
+      <dt>借入金</dt><dd class="num">${yen(S.loan)}</dd>
+      <dt>今日の運賃収入</dt><dd class="num pos">${yen(t.rev)}</dd>
+      <dt>昨日の市の補助金</dt><dd class="num pos">${yen(S.yday.sub)}</dd>
+      <dt>維持費の見込み</dt><dd class="num neg">${yen(up)}/日</dd>
+      <dt>今日の建設費など</dt><dd class="num neg">${yen(t.cost)}</dd>
+    </dl>
+    <p class="hint">市の補助金は毎日、公共交通の分担率が高く渋滞が少ないほど多くなります。目標を達成すると、さらに一時金が出ます。</p>
+    <div><span class="hint">日ごとの収支（緑：運賃＋補助金　赤：支出）</span><canvas id="chartMoney" class="chart"></canvas></div>
+    <div class="row"><button class="btn" data-act="borrow" ${S.loan >= 5e9 ? 'disabled' : ''}>10億円借りる</button><button class="btn" data-act="repay" ${S.loan >= 1e9 && S.money >= 1e9 ? '' : 'disabled'}>10億円返す</button></div>
+    <p class="hint">借入は最大50億円、日利0.02%。資金がマイナスのまま7日続くと交通局は解散です。</p>`;
+}
+function logHtml() {
+  return `<div class="list">${GOALS.map(g => {
+      const done = !!S.goals[g.id];
+      return `<div class="goal ${done ? 'done' : ''}"><div class="top"><span>${done ? '✓' : '○'} ${g.label}</span><span class="num">${yen(g.reward)}</span></div></div>`;
+    }).join('')}</div>
+    <div class="row"><button class="btn" data-act="help">遊び方</button><button class="btn" data-act="save">保存</button>
+      <button class="btn danger" data-act="reset">${pendingConfirm === 'reset' ? 'もう一度押すと最初から' : '最初からやり直す'}</button></div>
+    <h3>記録</h3><ul class="logList">${S.log.map(l => `<li><span class="d">${dateStr(l.t)}</span><span>${l.msg}</span></li>`).join('')}</ul>`;
+}
+function drawChart(id, vals, color, fmt) {
+  const c = document.getElementById(id);
+  if (!c) return;
+  const r = c.getBoundingClientRect();
+  c.width = r.width * dpr; c.height = r.height * dpr;
+  const g = c.getContext('2d');
+  g.scale(dpr, dpr);
+  g.font = `10px ${getComputedStyle(document.body).fontFamily}`;
+  if (vals.length < 2) { g.fillStyle = COL.muted; g.fillText('1日たつと記録が始まります', 4, 20); return; }
+  const max = Math.max(1, ...vals) * 1.1, top = 10, bot = r.height - 14;
+  g.strokeStyle = COL.rule; g.beginPath(); g.moveTo(0, bot + 0.5); g.lineTo(r.width, bot + 0.5); g.stroke();
+  g.beginPath();
+  vals.forEach((v, i) => { const x = 4 + i / (vals.length - 1) * (r.width - 40), y = bot - v / max * (bot - top); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.strokeStyle = color; g.lineWidth = 2; g.stroke();
+  const lx = 4 + (r.width - 40), ly = bot - vals[vals.length - 1] / max * (bot - top);
+  g.fillStyle = color; g.beginPath(); g.arc(lx, ly, 3, 0, 7); g.fill();
+  g.fillStyle = COL.muted; g.textAlign = 'left'; g.fillText(fmt(vals[vals.length - 1]), lx + 6, ly + 3);
+  g.fillText(`${vals.length}日前`, 4, r.height - 2);
+}
+function drawMoneyChart() {
+  const c = document.getElementById('chartMoney');
+  if (!c) return;
+  const r = c.getBoundingClientRect();
+  c.width = r.width * dpr; c.height = r.height * dpr;
+  const g = c.getContext('2d');
+  g.scale(dpr, dpr);
+  g.font = `10px ${getComputedStyle(document.body).fontFamily}`;
+  const data = S.hist.slice(-14);
+  if (!data.length) { g.fillStyle = COL.muted; g.fillText('1日たつと記録が始まります', 4, 20); return; }
+  const max = Math.max(1, ...data.map(d => Math.max(d.rev + d.sub, d.cost)));
+  const bw = r.width / Math.max(7, data.length), bot = r.height - 14;
+  data.forEach((d, i) => {
+    const x = i * bw + bw * 0.15, w = bw * 0.33;
+    const h1 = (d.rev + d.sub) / max * (bot - 6), h2 = d.cost / max * (bot - 6);
+    g.fillStyle = COL.good; g.fillRect(x, bot - h1, w, h1);
+    g.fillStyle = COL.bad; g.fillRect(x + w + 2, bot - h2, w, h2);
+  });
+  g.fillStyle = COL.muted; g.textAlign = 'right'; g.fillText(yen(max), r.width - 2, 10);
+  g.textAlign = 'left'; g.fillText(`直近${data.length}日`, 2, r.height - 2);
+}
+function updateHud() {
+  const m = $('#hMoney');
+  m.textContent = yen(S.money); m.classList.toggle('neg', S.money < 0);
+  $('#hDate').textContent = dateStr(S.t, true);
+  const t = S.today;
+  const share = t.transit + t.car > 50 ? t.transit / (t.transit + t.car + t.stranded) : S.yday.share;
+  $('#hShare').textContent = pct(share);
+  $('#hJam').textContent = t.jamN ? Math.round(t.jamSum / t.jamN * 100) : (S.yday.jam || '—');
+}
+
+// ===== オーバーレイ =====
+function overlay(html) { const o = $('#overlay'); o.innerHTML = `<div class="card">${html}</div>`; o.hidden = false; }
+function showHelp() {
+  overlay(`<h2>みなと市交通局</h2>
+    <p class="desc">あなたは人口およそ30万人の「みなと市」の交通局長です。朝夕の通勤で道路は渋滞し、川を渡る橋と都心は車であふれています。バス・路面電車・地下鉄・郊外鉄道・水上バスで市民を運び、車から公共交通へ乗り換えてもらいましょう。</p>
+    <ol>
+      <li>左下の「渋滞」ボタンで道路の混み具合を見て、どこに路線が必要か考えます。</li>
+      <li>「建設」タブで交通手段を選び、地図をタップして停留所や駅を置きます。</li>
+      <li>市民は「車で行く時間（渋滞と駐車場探しを含む）」と「公共交通で行く時間（歩き・待ち・乗車・乗り換え）」を比べて選びます。速くて本数が多い路線ほど乗ってもらえます。</li>
+      <li>バスは渋滞に巻き込まれます。専用レーンを作るか、地下鉄など渋滞と無関係な交通手段を使いましょう。</li>
+      <li>運賃と市の補助金が収入です。補助金は分担率が高く渋滞が少ないほど増えます。</li>
+    </ol>
+    <p class="hint">地図はドラッグで移動、ホイールかピンチで拡大。表示中のタブをもう一度押すとパネルを畳めます。進行は毎日自動保存されます。</p>
+    <button class="btn primary" data-act="closeOverlay">はじめる</button>`);
+}
+function showGameOver() {
+  speed = 0; syncSpeed();
+  overlay(`<h2>交通局は解散しました</h2><p>資金不足が7日続きました。</p>
+    <dl class="kv"><dt>期間</dt><dd>${dateStr(0)} 〜 ${dateStr(S.t)}</dd><dt>最後の分担率</dt><dd>${pct(S.yday.share)}</dd></dl>
+    <button class="btn primary" data-act="reset">最初からやり直す</button>`);
+  pendingConfirm = 'reset';
+}
+
+// ===== 保存 =====
+function save() {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(S, (k, v) => (k.startsWith('_') ? undefined : v)));
+  } catch (e) { /* 保存できない環境では何もしない */ }
+}
+function load() {
+  try { const o = JSON.parse(localStorage.getItem(SAVE_KEY)); return o && o.v === 1 ? o : null; } catch (e) { return null; }
+}
+
+// ===== 起動 =====
+function initGame() {
+  selLine = null; sel = null; draft = null; tool = null; FX = []; flowAcc = new Map();
+  applyLanes();
+  buildBase();
+  buildDestTables();
+  computeRoad();
+  rebuildNet();
+  computeLanes();
+  hourlyTrips(Math.floor(S.t / 60) % 24);
+  tab = 'lines';
+  $('#panel').classList.remove('collapsed');
+  fitView(); renderBuildBar(); syncSpeed(); syncLayers(); syncTabs();
+}
+function warmUp() {
+  // 最初の交通量を落ち着かせるため、朝のラッシュまでを数回まわしておく
+  for (let r = 0; r < 3; r++) for (let h = 5; h <= 8; h++) { computeRoad(); hourlyTrips(h); }
+  S.today = blankDay();
+  computeRoad();
+}
+function newRun() {
+  S = newGame();
+  speed = 1;
+  initGame();
+  warmUp();
+  log('みなと市交通局が発足しました。');
+  save();
+  showHelp();
+}
+let looping = false;
+function start(data) {
+  MAP = genMap();
+  readColors();
+  resize();
+  const hot = data && data.state;
+  S = (hot && hot.v === 1 ? hot : null) || load();
+  if (!S) { newRun(); }
+  else { initGame(); if (!hot) showHelp(); }
+  if (!looping) { looping = true; requestAnimationFrame(frame); }
+}
+let last = performance.now(), panelTimer = 0, simAcc = 0;
+function frame(now) {
+  const real = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  if (!S.over && speed > 0 && $('#overlay').hidden) {
+    simAcc += real * speed * 60 / REAL_SEC_PER_HOUR;
+    let guard = 0;
+    while (simAcc >= 0.5 && guard++ < 200) { step(0.5); simAcc -= 0.5; }
+    animT += real * speed;
+  }
+  FX.forEach(f => (f.life -= real * 0.8));
+  FX = FX.filter(f => f.life > 0);
+  computeLanes();
+  draw();
+  updateHud();
+  panelTimer += real;
+  const a = document.activeElement;
+  if ((dirtyPanel || panelTimer > 1) && !(a && a.tagName === 'INPUT')) { panelTimer = 0; renderPanel(); if (draft) renderBuildBar(); }
+  requestAnimationFrame(frame);
+}
+new ResizeObserver(() => {
+  if (!S) return;
+  const ow = CW, oh = CH;
+  const wasFit = Math.abs(view.s - Math.min(ow / (W + 20), oh / (H + 20))) < 1e-6;
+  resize();
+  if (wasFit) fitView(); else { view.x += (CW - ow) / 2; view.y += (CH - oh) / 2; }
+}).observe($('#mapWrap'));
+window.addEventListener('pagehide', save);
+window.claude?.hot?.snapshot?.(() => ({ state: JSON.parse(JSON.stringify(S, (k, v) => (k.startsWith('_') ? undefined : v))) }));
+const boot = data => start(data || {});
+window.claude?.hot?.ready ? window.claude.hot.ready(boot) : boot(window.claude?.hot?.data ?? {});
+</script>
+</body>
+</html>
